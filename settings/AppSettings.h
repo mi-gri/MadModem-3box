@@ -1,6 +1,7 @@
 #ifndef APPSETTINGS_H
 #define APPSETTINGS_H
 
+#include <QHash>
 #include <QString>
 #include <QVector>
 #include <QStringList>
@@ -67,6 +68,11 @@ public:
     int decodeTableRowHeightPx = 20;
     double audioRxClockPpm = 0.0;
     double audioTxClockPpm = 0.0;
+    // TX level (audio/TxLevel.h): tenths of a dB, 0..450 = -45.0..0.0 dB. The last
+    // level set, plus the level remembered per "<band>_<mode>" for TX and per band for Tune.
+    int txLevelUnits = 450;
+    QHash<QString, int> txLevelByBandMode;
+    QHash<QString, int> tuneLevelByBand;
 
     bool hamlibCatEnabled = false;
     bool hamlibPttEnabled = false;

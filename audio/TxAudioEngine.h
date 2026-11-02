@@ -75,6 +75,16 @@ public:
      */
     int outputVolumePercent() const;
 
+    /**
+     * @brief Sets the linear TX sample gain, 0..1 (see TxLevel.h). Applies to a running output at once.
+     */
+    void setOutputGain(double gain);
+
+    /**
+     * @brief Returns the linear TX sample gain.
+     */
+    double outputGain() const;
+
 signals:
     /**
      * @brief Emits generated TX audio blocks for the waterfall.
@@ -150,7 +160,7 @@ private:
     QTimer m_outputMonitor;
     QElapsedTimer m_outputProgressClock;
     TxPlaybackWatchdog m_playbackWatchdog;
-    int m_outputVolumePercent = 100;
+    double m_outputGain = 1.0;
 };
 
 #endif // TXAUDIOENGINE_H

@@ -48,6 +48,7 @@
 #include "dsp/cpu/CpuFeatures.h"
 #include "third_party/decodium_gpl/port/NtpClient.hpp"
 #include "audio/WavFileReader.h"
+#include "audio/TxLevel.h"
 #include "network/QsoUdpBroadcaster.h"
 
 #include <QAction>
@@ -2100,9 +2101,32 @@ void MainWindow::setupCustomWidgets()
         ui->btnTxTone->setMaximumHeight(34);
         ui->btnTxTone->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
+        // TX level: the digital gain of all TX audio, in dB as in JTDX (audio/TxLevel.h).
+        // Remembered per band and mode, and per band for Tune.
+        m_spinTxLevel = new QDoubleSpinBox(transportBar);
+        m_spinTxLevel->setRange(TxLevel::DbMin, TxLevel::DbMax);
+        m_spinTxLevel->setDecimals(1);
+        m_spinTxLevel->setSingleStep(0.1);
+        m_spinTxLevel->setSuffix(QStringLiteral(" dB"));
+        m_spinTxLevel->setAlignment(Qt::AlignCenter);
+        m_spinTxLevel->setAccelerated(true);
+        m_spinTxLevel->setKeyboardTracking(false);
+        m_spinTxLevel->setMinimumHeight(30);
+        m_spinTxLevel->setMaximumHeight(34);
+        m_spinTxLevel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        m_spinTxLevel->setToolTip(uiText("tx_level_tooltip", "TX level: digital gain of the transmitted audio, 0.0 dB = full scale. Sets the drive and so the RF power. Remembered for each band and mode; during Tune it sets the Tune level of the band."));
+        m_spinTxLevel->setStatusTip(m_spinTxLevel->toolTip());
+        m_txLevelSaveTimer.setSingleShot(true);
+        m_txLevelSaveTimer.setInterval(1000);
+        connect(&m_txLevelSaveTimer, &QTimer::timeout, this, &MainWindow::savePersistentSettings);
+        connect(m_spinTxLevel, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, &MainWindow::handleTxLevelChanged);
+
         transportLayout->addWidget(ui->btnStartRx, 1);
         transportLayout->addWidget(ui->btnTxTone, 1);
+        transportLayout->addWidget(m_spinTxLevel, 0);
         ui->modeTabLayout->insertWidget(0, transportBar, 0);
+        restoreTxLevelForContext();
     }
 
     if (ui->mainHorizontalSplitter != nullptr &&
@@ -12035,6 +12059,10 @@ void MainWindow::handleRigFrequencyChanged(double frequencyHz)
         if (m_waterfallWidget) m_waterfallWidget->clearSkimmer();
     }
 
+    if (bandFromFrequencyHz(previousFrequencyHz) != bandFromFrequencyHz(frequencyHz)) {
+        restoreTxLevelForContext();
+    }
+
     const QString band = ftBandFromFrequencyHz(frequencyHz);
     bool ftBandChanged = false;
     if (!band.isEmpty()) {
@@ -13235,6 +13263,7 @@ void MainWindow::finishPendingModeChange()
 
 void MainWindow::handleModeChanged(const QString &modeName)
 {
+    restoreTxLevelForContext();
     m_rttySkimmerSpots.clear();
     if (m_waterfallWidget) m_waterfallWidget->clearSkimmer();
     if (m_rttyMultiDecoder) invokeRxDecoder(m_rttyMultiDecoder, &RttyMultiDecoder::reset);
@@ -20047,6 +20076,7 @@ void MainWindow::beginScheduledFt8Transmit()
 
 void MainWindow::stopFt8Shell()
 {
+    setTxLevelTune(false);
     if (m_txWaveformPreparer) m_txWaveformPreparer->cancel();
     if(m_ftTxWorker)m_ftTxWorker->cancelPendingStart();
     m_ft8OperatorStopLatched = true;
@@ -20149,6 +20179,89 @@ void MainWindow::stopFt8Shell()
               : QStringLiteral("FT digital STOP requested: pending TX/auto-sequence cancelled, RX monitor active."));
 }
 
+QString MainWindow::txLevelKey() const
+{
+    const QString band = bandFromFrequencyHz(m_lastRigFrequencyHz);
+    if (band.isEmpty() || ui == nullptr || ui->cmbMode == nullptr) {
+        return QString();
+    }
+    // The key is a settings key: nothing but letters, digits and '-' in the mode part.
+    QString mode = ui->cmbMode->currentText();
+    mode.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9]+")), QStringLiteral("-"));
+    return band + QLatin1Char('_') + mode;
+}
+
+void MainWindow::restoreTxLevelForContext()
+{
+    if (m_spinTxLevel == nullptr) {
+        return;
+    }
+    // Without a remembered level for this band/mode (or band, for Tune) the control
+    // keeps the last TX level, as JTDX does.
+    int units = m_settings.txLevelUnits;
+    const QString key = txLevelKey();
+    if (m_txLevelTune) {
+        const QString band = key.section(QLatin1Char('_'), 0, 0);
+        if (!band.isEmpty() && m_settings.tuneLevelByBand.contains(band)) {
+            units = m_settings.tuneLevelByBand.value(band);
+        }
+    } else if (!key.isEmpty() && m_settings.txLevelByBandMode.contains(key)) {
+        units = m_settings.txLevelByBandMode.value(key);
+    }
+    {
+        const QSignalBlocker block(m_spinTxLevel);
+        m_spinTxLevel->setValue(TxLevel::dbFromUnits(units));
+    }
+    applyTxLevel();
+}
+
+void MainWindow::applyTxLevel()
+{
+    if (m_spinTxLevel == nullptr) {
+        return;
+    }
+    const double gain = TxLevel::gainFromUnits(TxLevel::unitsFromDb(m_spinTxLevel->value()));
+    if (m_txAudioEngine != nullptr) {
+        m_txAudioEngine->setOutputGain(gain);
+    }
+    if (m_ftTxWorker != nullptr) {
+        // Queued ahead of any start request, so the FT engine never starts with an older level.
+        auto *worker = m_ftTxWorker;
+        QMetaObject::invokeMethod(worker, [worker, gain] { worker->setOutputGain(gain); }, Qt::QueuedConnection);
+    }
+}
+
+void MainWindow::handleTxLevelChanged(double db)
+{
+    const int units = TxLevel::unitsFromDb(db);
+    const QString key = txLevelKey();
+    if (m_txLevelTune) {
+        const QString band = key.section(QLatin1Char('_'), 0, 0);
+        if (!band.isEmpty()) {
+            m_settings.tuneLevelByBand.insert(band, units);
+        }
+    } else {
+        m_settings.txLevelUnits = units;
+        if (!key.isEmpty()) {
+            m_settings.txLevelByBandMode.insert(key, units);
+        }
+    }
+    applyTxLevel();
+    m_txLevelSaveTimer.start();
+}
+
+void MainWindow::setTxLevelTune(bool tune)
+{
+    if (m_txLevelTune == tune) {
+        return;
+    }
+    m_txLevelTune = tune;
+    if (m_spinTxLevel != nullptr) {
+        m_spinTxLevel->setPrefix(tune ? uiText("tune_level_prefix", "Tune") + QLatin1Char(' ') : QString());
+    }
+    restoreTxLevelForContext();
+}
+
 void MainWindow::tuneFt8Shell()
 {
     applyFt8Settings();
@@ -20213,6 +20326,7 @@ void MainWindow::tuneFt8Shell()
     m_pendingFt8TxPlan.tune = true;
     m_pendingFt8TxPlan.message = QStringLiteral("TUNE");
 
+    setTxLevelTune(true);
     beginScheduledFt8Transmit();
     startFtPreparedSlotTransmit();
 }
@@ -25010,6 +25124,7 @@ void MainWindow::startImageTx()
     setReceiverRunning(false);
     m_progressTx->setValue(0);
 
+    applyTxLevel();
     if (ft8Mode && m_ftTxWorker != nullptr) {
         m_ftTxWorkerRunning = true;
         m_ftTxActiveRequest=m_ftTxWorker->newRequest();
@@ -25367,6 +25482,7 @@ void MainWindow::startFtPreparedSlotTransmit()
         handleTxError(QStringLiteral("Dedicated FT TX worker is unavailable."));
         return;
     }
+    applyTxLevel();
     m_ftTxWorkerRunning = true;
     m_ftTxActiveRequest=m_ftTxWorker->newRequest();
     const qint64 deadline = pendingFt8AudioStartDeadlineUtcMs();
@@ -25503,6 +25619,7 @@ void MainWindow::handleTxStarted()
 
 void MainWindow::handleTxStopped()
 {
+    setTxLevelTune(false);
     m_pendingTextTxText.clear();
     m_pendingTextTxMode.clear();
     m_ftTxWorkerRunning = false;
@@ -25635,6 +25752,7 @@ void MainWindow::handleTxFinished()
 
 void MainWindow::handleTxError(const QString &message)
 {
+    setTxLevelTune(false);
     const FtTxPlan failedFtPlan = m_pendingFt8TxPlan;
     m_pendingTextTxText.clear();
     m_pendingTextTxMode.clear();

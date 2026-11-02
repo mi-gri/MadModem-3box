@@ -26,9 +26,18 @@ namespace AudioNs = QAudio;
 
 #include <atomic>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #include "TxOutputDevice.h"
+
+namespace {
+// Linear gain -> dB for the TX log lines.
+double gainDb(double gain)
+{
+    return gain > 0.0 ? 20.0 * std::log10(gain) : -999.0;
+}
+}
 
 // -----------------------------------------------------------------------------
 // Construction
@@ -154,7 +163,7 @@ bool TxAudioEngine::startOutput(const QString &deviceName, std::unique_ptr<TxMod
 
 #endif
 
-    TxOutputDevice *device = new TxOutputDevice(m_modulator.get(), m_sampleRate, m_outputVolumePercent, this);
+    TxOutputDevice *device = new TxOutputDevice(m_modulator.get(), m_sampleRate, m_outputGain, this);
 
     device->setStartGuard(latestStartUtcMs, std::move(authorized));
     connect(device, &TxOutputDevice::audioBlockReady,
@@ -206,7 +215,7 @@ bool TxAudioEngine::startOutput(const QString &deviceName, std::unique_ptr<TxMod
     emit logMessage(QStringLiteral("TX audio opened: %1 Hz, mono PCM16, buffer %2 B, source available %3 B, state %4.")
                     .arg(m_sampleRate).arg(m_audioOutput->bufferSize())
                     .arg(device->bytesAvailable()).arg(static_cast<int>(m_audioOutput->state())));
-    emit logMessage(QStringLiteral("TX device: %1; output level %2%; backend volume %3.").arg(deviceName.isEmpty()?QStringLiteral("default"):deviceName).arg(m_outputVolumePercent).arg(m_audioOutput->volume()));
+    emit logMessage(QStringLiteral("TX device: %1; output level %2 dB; backend volume %3.").arg(deviceName.isEmpty()?QStringLiteral("default"):deviceName).arg(gainDb(m_outputGain), 0, 'f', 1).arg(m_audioOutput->volume()));
     emit progressChanged(0.0);
 
     return true;
@@ -246,16 +255,26 @@ int TxAudioEngine::sampleRate() const
 
 void TxAudioEngine::setOutputVolumePercent(int percent)
 {
-    m_outputVolumePercent = qBound(0, percent, 100);
-    TxOutputDevice *device = qobject_cast<TxOutputDevice *>(m_outputDevice);
-    if (device != nullptr) {
-        device->setVolumePercent(m_outputVolumePercent);
-    }
+    setOutputGain(qBound(0, percent, 100) / 100.0);
 }
 
 int TxAudioEngine::outputVolumePercent() const
 {
-    return m_outputVolumePercent;
+    return qRound(m_outputGain * 100.0);
+}
+
+void TxAudioEngine::setOutputGain(double gain)
+{
+    m_outputGain = qBound(0.0, gain, 1.0);
+    TxOutputDevice *device = qobject_cast<TxOutputDevice *>(m_outputDevice);
+    if (device != nullptr) {
+        device->setGain(m_outputGain);
+    }
+}
+
+double TxAudioEngine::outputGain() const
+{
+    return m_outputGain;
 }
 
 // -----------------------------------------------------------------------------
@@ -334,9 +353,9 @@ void TxAudioEngine::releaseAudioOutput()
     m_outputMonitor.stop();
     if (m_audioOutput != nullptr) {
         const auto* source=static_cast<TxOutputDevice*>(m_outputDevice);
-        emit logMessage(QStringLiteral("TX audio closing: pulled %1 samples, processed %2 us, PCM peak %3/32767, output level %4%.")
+        emit logMessage(QStringLiteral("TX audio closing: pulled %1 samples, processed %2 us, PCM peak %3/32767, output level %4 dB.")
             .arg(source?source->samplesProduced():0).arg(m_audioOutput->processedUSecs())
-            .arg(source?source->peakPcm():0).arg(m_outputVolumePercent));
+            .arg(source?source->peakPcm():0).arg(gainDb(m_outputGain), 0, 'f', 1));
         disconnect(m_audioOutput, nullptr, this, nullptr);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         m_audioOutput->stop();

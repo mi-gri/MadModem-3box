@@ -2244,6 +2244,11 @@ for _key, _translations in FT_CQ_WORKLIST_KEYS.items():
     for _lang, _value in _translations.items():
         KEY_EXACT.setdefault(_lang, {})[_key] = _value
 
+from tx_level_i18n import KEYS as TX_LEVEL_KEYS
+for _key, _translations in TX_LEVEL_KEYS.items():
+    for _lang, _value in _translations.items():
+        KEY_EXACT.setdefault(_lang, {})[_key] = _value
+
 from sstv_editor_i18n import LANGS as SSTV_LANGS, PHRASES as SSTV_PHRASES
 for _source, _translations in SSTV_PHRASES.items():
     for _lang, _value in zip(SSTV_LANGS, _translations):

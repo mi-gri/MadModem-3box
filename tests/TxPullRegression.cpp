@@ -1,6 +1,8 @@
 #include "audio/TxOutputDevice.h"
+#include "audio/TxLevel.h"
 #include <QCoreApplication>
 #include <algorithm>
+#include <cstdlib>
 #include <iostream>
 
 class Tone final : public TxModulator {
@@ -23,7 +25,7 @@ int main(int argc, char **argv) {
     bool ok = true;
     for (int tail : {0, 17, 16000}) {
         Tone tone(tail);
-        TxOutputDevice source(&tone, 48000, 100);
+        TxOutputDevice source(&tone, 48000, 1.0);
         source.start();
         bool availableBeforeRead = source.bytesAvailable() > 0 && !source.atEnd();
         QByteArray pcm;
@@ -42,18 +44,25 @@ int main(int argc, char **argv) {
         ok &= pass;
     }
     {
-        Tone tone(0); TxOutputDevice source(&tone,48000,100);
+        Tone tone(0); TxOutputDevice source(&tone,48000,1.0);
         source.setStartGuard(1, {}); source.start(); char pcm[512];
         const bool pass = source.read(pcm,sizeof pcm)==0 && source.aborted() && tone.remaining==4096;
         std::cout << (pass?"PASS ":"FAIL ") << "expired first pull produces no PCM\n"; ok &= pass;
     }
     {
-        Tone tone(0); TxOutputDevice source(&tone,48000,100); bool authorized=true;
+        Tone tone(0); TxOutputDevice source(&tone,48000,1.0); bool authorized=true;
         source.setStartGuard(0,[&](){return authorized;}); source.start(); char pcm[512];
         const bool began=source.read(pcm,sizeof pcm)>0; const int remaining=tone.remaining;
         authorized=false;
         const bool pass=began && source.read(pcm,sizeof pcm)==0 && source.aborted() && tone.remaining==remaining;
         std::cout << (pass?"PASS ":"FAIL ") << "STOP revokes subsequent PCM pulls\n"; ok &= pass;
+    }
+    {
+        // TX level: -6.0 dB scales the 0.5 tone to 0.5 * 0.501 of full scale.
+        Tone tone(0); TxOutputDevice source(&tone,48000,1.0);
+        source.setGain(TxLevel::gainFromUnits(TxLevel::unitsFromDb(-6.0))); source.start(); char pcm[512];
+        const bool pass=source.read(pcm,sizeof pcm)>0 && std::abs(source.peakPcm()-qRound(0.5*0.501187*32767.0))<=1;
+        std::cout << (pass?"PASS ":"FAIL ") << "TX level gain scales PCM, peak=" << source.peakPcm() << '\n'; ok &= pass;
     }
     return ok ? 0 : 1;
 }

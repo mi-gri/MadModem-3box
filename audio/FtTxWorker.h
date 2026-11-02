@@ -36,6 +36,8 @@ public slots:
     void startOutput(const QString &deviceName, TxModulator *modulator, qint64 latestStartUtcMs = 0);
     void startScheduledOutput(const QString &deviceName, TxModulator *modulator, qint64 latestStartUtcMs, quint64 requestId);
     void stopOutput();
+    // Linear TX sample gain (TxLevel.h); kept for the engine created on the first start.
+    void setOutputGain(double gain);
 
 signals:
     void audioBlockReady(const AudioBlock &block);
@@ -58,6 +60,7 @@ private:
 
 private:
     TxAudioEngine *m_engine = nullptr;
+    double m_outputGain = 1.0;
     bool m_running = false;
     std::atomic<quint64> m_authorizedRequest{0};
     quint64 m_activeRequest = 0;

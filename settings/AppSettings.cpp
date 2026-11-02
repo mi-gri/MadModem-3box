@@ -1,6 +1,7 @@
 #include "AppSettings.h"
 #include "../utils/InstallationPaths.h"
 #include "../rotator/RotatorPeakSearch.h"
+#include "../audio/TxLevel.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -232,6 +233,17 @@ void AppSettings::load()
     if (audioTxClockPpm < -5000.0 || audioTxClockPpm > 5000.0) {
         audioTxClockPpm = 0.0;
     }
+    txLevelUnits = TxLevel::clampUnits(settings.value("TxLevel/global", txLevelUnits).toInt());
+    const auto loadTxLevels = [&settings](const QString &group, QHash<QString, int> &levels) {
+        levels.clear();
+        settings.beginGroup(group);
+        for (const QString &key : settings.childKeys()) {
+            levels.insert(key, TxLevel::clampUnits(settings.value(key).toInt()));
+        }
+        settings.endGroup();
+    };
+    loadTxLevels(QStringLiteral("TxLevel/Tx"), txLevelByBandMode);
+    loadTxLevels(QStringLiteral("TxLevel/Tune"), tuneLevelByBand);
 
     pttPortName = settings.value("PTT/serialPort", pttPortName).toString();
     const bool storedPttMethod = settings.contains("PTT/method");
@@ -795,6 +807,14 @@ bool AppSettings::save() const
     settings.setValue("Display/decodeTableRowHeightPx", decodeTableRowHeightPx);
     settings.setValue("Audio/rxClockPpm", audioRxClockPpm);
     settings.setValue("Audio/txClockPpm", audioTxClockPpm);
+    settings.remove("TxLevel");
+    settings.setValue("TxLevel/global", txLevelUnits);
+    for (auto it = txLevelByBandMode.cbegin(); it != txLevelByBandMode.cend(); ++it) {
+        settings.setValue(QStringLiteral("TxLevel/Tx/") + it.key(), it.value());
+    }
+    for (auto it = tuneLevelByBand.cbegin(); it != tuneLevelByBand.cend(); ++it) {
+        settings.setValue(QStringLiteral("TxLevel/Tune/") + it.key(), it.value());
+    }
 
     settings.setValue("PTT/serialPort", pttPortName);
     settings.setValue("PTT/method", pttMethod);

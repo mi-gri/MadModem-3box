@@ -905,6 +905,31 @@ private slots:
     void tuneFt8Shell();
 
     /**
+     * @brief Key of the current band and mode in the TX level memory; empty while the band is unknown.
+     */
+    QString txLevelKey() const;
+
+    /**
+     * @brief Shows the TX (or Tune) level remembered for the current band/mode and applies it.
+     */
+    void restoreTxLevelForContext();
+
+    /**
+     * @brief Sends the TX level of the spin box to both TX audio engines.
+     */
+    void applyTxLevel();
+
+    /**
+     * @brief Operator changed the TX level: remember it for the current band/mode or Tune band.
+     */
+    void handleTxLevelChanged(double db);
+
+    /**
+     * @brief Switches the TX level control between the TX and the Tune level.
+     */
+    void setTxLevelTune(bool tune);
+
+    /**
      * @brief Starts the pending FT8 transmission when the selected UTC slot opens.
      */
     void beginScheduledFt8Transmit();
@@ -2262,6 +2287,9 @@ private:
     QVector<Ft8AudioActivity> m_ft8RecentAudioActivity;
     FtStandardMessageSet m_ftStandardMessages;
     double m_lastRigFrequencyHz = 0.0;
+    QDoubleSpinBox *m_spinTxLevel = nullptr;  // TX level in dB, see audio/TxLevel.h
+    bool m_txLevelTune = false;               // the control shows and sets the Tune level
+    QTimer m_txLevelSaveTimer;                // spin box steps are saved once they settle
     bool m_lastRigPttOn = false;
     mm::CatRotatorController *m_catRotatorController = nullptr;
     QWidget *m_tabCatRotator = nullptr;

@@ -14,6 +14,14 @@ FtTxWorker::~FtTxWorker()
     stopOutput();
 }
 
+void FtTxWorker::setOutputGain(double gain)
+{
+    m_outputGain = gain;
+    if (m_engine != nullptr) {
+        m_engine->setOutputGain(gain);
+    }
+}
+
 void FtTxWorker::ensureEngine()
 {
     if (m_engine != nullptr) {
@@ -21,6 +29,7 @@ void FtTxWorker::ensureEngine()
     }
 
     m_engine = new TxAudioEngine(this);
+    m_engine->setOutputGain(m_outputGain);
 
     connect(m_engine, &TxAudioEngine::logMessage, this, &FtTxWorker::logMessage);
     connect(m_engine, &TxAudioEngine::audioBlockReady,

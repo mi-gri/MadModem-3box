@@ -21,12 +21,12 @@ public:
      */
     TxOutputDevice(TxModulator *modulator,
                    int sampleRate,
-                   int volumePercent,
+                   double gain,
                    QObject *parent = nullptr)
         : QIODevice(parent),
           m_modulator(modulator),
           m_sampleRate(sampleRate),
-          m_volumePercent(qBound(0, volumePercent, 100))
+          m_gain(qBound(0.0, gain, 1.0))
     {
     }
 
@@ -78,9 +78,17 @@ public:
         return open(QIODevice::ReadOnly | QIODevice::Unbuffered);
     }
 
+    /**
+     * @brief Sets the linear TX sample gain, 0..1; takes effect on the next pull.
+     */
+    void setGain(double gain)
+    {
+        m_gain.store(qBound(0.0, gain, 1.0), std::memory_order_relaxed);
+    }
+
     void setVolumePercent(int percent)
     {
-        m_volumePercent = qBound(0, percent, 100);
+        setGain(qBound(0, percent, 100) / 100.0);
     }
 
 signals:
@@ -140,7 +148,7 @@ protected:
 
         qint16 *pcm = reinterpret_cast<qint16 *>(data);
 
-        const double gain = static_cast<double>(m_volumePercent.load(std::memory_order_relaxed)) / 100.0;
+        const double gain = m_gain.load(std::memory_order_relaxed);
         int peak=0;
         for (int i = 0; i < returnedSamples; ++i) {
             const double bounded = qBound(-1.0, static_cast<double>(samples.at(i)) * gain, 1.0);
@@ -207,7 +215,7 @@ private:
     std::atomic<bool> m_aborted{false};
     std::atomic<qint64> m_produced{0};
     std::atomic<int> m_peakPcm{0};
-    std::atomic<int> m_volumePercent{100};
+    std::atomic<double> m_gain{1.0};
     std::atomic<bool> m_exhausted{false};
 };
 
