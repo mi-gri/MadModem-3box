@@ -1,6 +1,7 @@
 #include "utils/ApplicationIdentity.h"
 #include "runtime/SessionDiagnostics.h"
 #include "modems/ft8/FtDiagnostics.h"
+#include "widgets/CqSpots.h"
 #include "widgets/DecodeTableClipboard.h"
 #include "callsign/QrzLookupPanel.h"
 #include "updates/UpdateController.h"
@@ -259,6 +260,33 @@ private:
 };
 
 namespace {
+
+// Waterfall FFT resolution per mode (DspEngine::setTargetBinHz); 0 = default.
+double waterfallTargetBinHz(const QString &modeName)
+{
+    if (modeName == QStringLiteral("FT8")) return 1.5;  // ~JTDX/WSJT-X FT8 wide graph
+    if (modeName == QStringLiteral("FT4")) return 3.0;  // shorter symbols, wider tones
+    return 0.0;
+}
+
+// Waterfall row time per mode (DspEngine::setTargetRowSeconds); 0 = one row per hop.
+// ft8RowMs is the operator's setting (JTDX writes an FT8 row every ~0.29 s);
+// FT4, with symbols a third as long, scrolls twice as fast.
+double waterfallTargetRowSeconds(const QString &modeName, int ft8RowMs)
+{
+    const double ft8 = qBound(50, ft8RowMs, 1000) / 1000.0;
+    if (modeName == QStringLiteral("FT8")) return ft8;
+    if (modeName == QStringLiteral("FT4")) return ft8 / 2.0;
+    return 0.0;
+}
+
+// T/R period whose starts the waterfall marks with a line and the UTC; 0 = none.
+int waterfallPeriodMs(const QString &modeName)
+{
+    if (modeName == QStringLiteral("FT8")) return 15000;
+    if (modeName == QStringLiteral("FT4")) return 7500;
+    return 0;
+}
 
 // FT TX timing ownership. CAT/PTT is deliberately armed during the quiet tail
 // of the preceding RX slot. Automatic plans require
@@ -8657,6 +8685,26 @@ void MainWindow::setupFt8Page()
     m_chkFt8AutoScroll->setToolTip(uiText("ft_auto_scroll_tooltip", "Keep the decode table scrolled to the newest line while receiving."));
     rxToolsLayout->addWidget(m_btnFt8ClearRx);
     rxToolsLayout->addWidget(m_chkFt8AutoScroll);
+    // CQ calls on the waterfall: seconds shown, 0 = off (as in JTDX 3box)
+    m_spinFtWaterfallCq = new QSpinBox(rxGroup);
+    m_spinFtWaterfallCq->setObjectName(QStringLiteral("spinFtWaterfallCq"));
+    m_spinFtWaterfallCq->setRange(0, 600);
+    m_spinFtWaterfallCq->setSingleStep(5);
+    m_spinFtWaterfallCq->setPrefix(uiText("ft_waterfall_cq_prefix", "CQ calls").trimmed() + QLatin1Char(' '));
+    m_spinFtWaterfallCq->setSuffix(QStringLiteral(" s"));
+    m_spinFtWaterfallCq->setSpecialValueText(uiText("ft_waterfall_cq_off", "CQ calls off"));
+    m_spinFtWaterfallCq->setToolTip(uiText("ft_waterfall_cq_tooltip", "Shows the callsigns of stations calling CQ at the bottom of the waterfall, over their signal, for this many seconds; they fade out towards the end. 0 switches it off."));
+    m_spinFtWaterfallCq->setValue(qBound(0, m_settings.ftWaterfallCqSeconds, 600));
+    connect(m_spinFtWaterfallCq, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int seconds) {
+        m_settings.ftWaterfallCqSeconds = seconds;
+        // A changed time applies to the calls already shown, as in JTDX.
+        for (Ft8WaterfallCallout &callout : m_ft8WaterfallCallouts) {
+            callout.durationMs = (callout.directReplyToMe ? qMax(45, seconds) : seconds) * 1000;
+        }
+        updateFt8WaterfallOverlays();
+        m_settings.save();
+    });
+    rxToolsLayout->addWidget(m_spinFtWaterfallCq);
     rxToolsLayout->addStretch(1);
     rxLayout->addLayout(rxToolsLayout);
 
@@ -9664,8 +9712,16 @@ void MainWindow::setupProcessingConnections()
                 Qt::QueuedConnection);
     }
 
+    // Row time first, then the row: both queued from the DSP thread, so they
+    // arrive in this order.
+    connect(m_dspEngine, &DspEngine::waterfallRowTime,
+            m_waterfallWidget, &WaterfallWidget::setNextRowUtcMs,
+            Qt::QueuedConnection);
     connect(m_dspEngine, &DspEngine::waterfallLineReady,
             m_waterfallWidget, &WaterfallWidget::addLine,
+            Qt::QueuedConnection);
+    connect(m_waterfallWidget, &WaterfallWidget::displayColumnsWanted,
+            m_dspEngine, &DspEngine::setColumns,
             Qt::QueuedConnection);
 
     connect(m_dspEngine, &DspEngine::dominantFrequencyChanged,
@@ -12063,6 +12119,14 @@ void MainWindow::handleRigFrequencyChanged(double frequencyHz)
         restoreTxLevelForContext();
     }
 
+    // The CQ calls stand over audio frequencies: a new dial frequency - another
+    // band, a QSY - makes them wrong (as in JTDX).
+    if (previousFrequencyHz > 0 && qAbs(frequencyHz - previousFrequencyHz) >= 50.0 &&
+        !m_ft8WaterfallCallouts.isEmpty()) {
+        m_ft8WaterfallCallouts.clear();
+        updateFt8WaterfallOverlays();
+    }
+
     const QString band = ftBandFromFrequencyHz(frequencyHz);
     bool ftBandChanged = false;
     if (!band.isEmpty()) {
@@ -13269,6 +13333,14 @@ void MainWindow::handleModeChanged(const QString &modeName)
     if (m_rttyMultiDecoder) invokeRxDecoder(m_rttyMultiDecoder, &RttyMultiDecoder::reset);
     if (m_dspEngine != nullptr) QMetaObject::invokeMethod(m_dspEngine, "setNarrowBandDisplay",
         Qt::QueuedConnection, Q_ARG(bool, modeName == RttyDecoder::modeName() || modeName == CwDecoder::modeName()));
+    // FT8/FT4: a fine waterfall like JTDX's, in which the tones of a signal
+    // stand apart (FT8 6.25 Hz, FT4 20.8 Hz spacing). Other modes keep the
+    // shorter FFT, whose shorter window does not smear CW/RTTY characters.
+    if (m_dspEngine != nullptr) QMetaObject::invokeMethod(m_dspEngine, "setTargetBinHz",
+        Qt::QueuedConnection, Q_ARG(double, waterfallTargetBinHz(modeName)));
+    if (m_dspEngine != nullptr) QMetaObject::invokeMethod(m_dspEngine, "setTargetRowSeconds",
+        Qt::QueuedConnection, Q_ARG(double, waterfallTargetRowSeconds(modeName, m_settings.ftWaterfallRowMs)));
+    if (m_waterfallWidget != nullptr) m_waterfallWidget->setPeriodMs(waterfallPeriodMs(modeName));
     if(m_txPreparationPending)stopImageTx();
     if (m_nativeWeakSignalTxPending) {
         const bool sameFamily =
@@ -13598,6 +13670,10 @@ void MainWindow::updateWaterfallMarkers()
         QVector<FrequencyMarker> markers;
         FrequencyMarker rx;
         rx.frequencyHz = (m_spinMsk144RxFreq != nullptr) ? m_spinMsk144RxFreq->value() : 1500.0;
+        // MSK144: 2000 baud MSK, tones at f -/+ 500 Hz; the main lobe spans
+        // about f -/+ 1000 Hz. Marked: the two tones' span around f.
+        rx.bandwidthHz = 1000.0;
+        rx.centred = true;
         rx.label = QStringLiteral("RX");
         rx.color = QColor(80, 255, 120);
         rx.width = 2;
@@ -13605,6 +13681,8 @@ void MainWindow::updateWaterfallMarkers()
         markers.append(rx);
         FrequencyMarker tx;
         tx.frequencyHz = (m_spinMsk144TxFreq != nullptr) ? m_spinMsk144TxFreq->value() : 1500.0;
+        tx.bandwidthHz = 1000.0;
+        tx.centred = true;
         tx.label = QStringLiteral("TX");
         tx.color = QColor(255, 80, 80);
         tx.width = 2;
@@ -13616,8 +13694,14 @@ void MainWindow::updateWaterfallMarkers()
     }
 
     if (Q65Mode::isFamilyMode(mode)) {
+        // Q65: 65 tones from the base tone, spaced baud x submode multiplier.
+        const int q65Period = (m_cmbQ65Period != nullptr) ? m_cmbQ65Period->currentData().toInt()
+                                                          : Q65Mode::defaultPeriodSeconds();
+        const double q65BandwidthHz = 65.0 * Q65Mode::baud(q65Period) *
+                                      Q65Mode::mshvToneSpacingMultiplier(currentQ65Submode());
         QVector<FrequencyMarker> markers;
         FrequencyMarker rx;
+        rx.bandwidthHz = q65BandwidthHz;
         rx.frequencyHz = (m_spinQ65RxFreq != nullptr) ? m_spinQ65RxFreq->value() : 1500.0;
         rx.label = QStringLiteral("RX");
         rx.color = QColor(80, 255, 120);
@@ -13626,6 +13710,7 @@ void MainWindow::updateWaterfallMarkers()
         markers.append(rx);
         FrequencyMarker tx;
         tx.frequencyHz = (m_spinQ65TxFreq != nullptr) ? m_spinQ65TxFreq->value() : 1500.0;
+        tx.bandwidthHz = q65BandwidthHz;
         tx.label = QStringLiteral("TX");
         tx.color = QColor(255, 80, 80);
         tx.width = 2;
@@ -19787,13 +19872,20 @@ void MainWindow::addFt8WaterfallOverlayForDecode(const Ft8RxDecoder::Decode &dec
     const QString myCall = stationCallsign();
     const ParsedFt8Message parsed = parseFt8MessageText(decode.message, myCall);
 
+    QString call;
     QString label;
     QColor color = mmColourFromSetting(m_settings.ftHighlightCqForeground, QColor(255, 235, 80));
     bool directReplyToMe = false;
     bool blacklistedCallout = false;
+    // CQ calls stay for the time set by the operator (0 = none), as in JTDX;
+    // a station answering me stays at least 45 s.
+    const int cqSeconds = qBound(0, m_settings.ftWaterfallCqSeconds, 600);
 
     if (blacklistedDecode) {
-        QString call = ft8PrimaryCallsignForDisplay(parsed, myCall).trimmed().toUpper();
+        if (cqSeconds <= 0) {
+            return;
+        }
+        call = ft8PrimaryCallsignForDisplay(parsed, myCall).trimmed().toUpper();
         if (parsed.cq) {
             const QString cqCall = ft8CqCallsignFromMessage(parsed).trimmed().toUpper();
             if (!cqCall.isEmpty()) call = cqCall;
@@ -19803,14 +19895,15 @@ void MainWindow::addFt8WaterfallOverlayForDecode(const Ft8RxDecoder::Decode &dec
         color = QColor(255, 68, 68);
         blacklistedCallout = true;
     } else if (parsed.cq) {
-        const QString cqCall = ft8CqCallsignFromMessage(parsed);
-        if (cqCall.isEmpty()) {
+        call = ft8CqCallsignFromMessage(parsed).trimmed().toUpper();
+        if (call.isEmpty() || cqSeconds <= 0) {
             return;
         }
-        label = QStringLiteral("CQ %1").arg(cqCall);
+        label = call;   // just the call, as in JTDX: the narrower the labels, the more of them fit
         color = mmColourFromSetting(m_settings.ftHighlightCqForeground, QColor(255, 235, 80));
     } else if (isFt8DirectReplyToMyCall(parsed, myCall)) {
         directReplyToMe = true;
+        call = parsed.senderCall.trimmed().toUpper();
         label = QStringLiteral("%1 → %2").arg(parsed.senderCall, myCall.trimmed().toUpper());
         if (!parsed.report.isEmpty()) {
             label += QStringLiteral(" ") + parsed.report;
@@ -19824,23 +19917,24 @@ void MainWindow::addFt8WaterfallOverlayForDecode(const Ft8RxDecoder::Decode &dec
 
     Ft8WaterfallCallout callout;
     callout.frequencyHz = qBound(100, decode.frequencyHz, 3000);
+    callout.call = call;
     callout.label = label;
     callout.color = color;
-    callout.expiresUtc = QDateTime::currentDateTimeUtc().addSecs(directReplyToMe ? 45 : 32);
+    callout.heardUtc = QDateTime::currentDateTimeUtc();
+    callout.durationMs = (directReplyToMe ? qMax(45, cqSeconds) : cqSeconds) * 1000;
     callout.directReplyToMe = directReplyToMe;
     callout.blacklisted = blacklistedCallout;
 
-    // Replace existing label for the same station/frequency bucket instead of
-    // piling up duplicates over consecutive FT8 slots.
-    const int bucket = callout.frequencyHz / 10;
-    for (Ft8WaterfallCallout &existing : m_ft8WaterfallCallouts) {
-        if (existing.label == callout.label && (existing.frequencyHz / 10) == bucket) {
-            existing = callout;
-            if (!m_ft8UiBatchApplying) {
-                updateFt8WaterfallOverlays();
-            }
-            return;
+    // One callout per station: one heard again - on another frequency, say -
+    // moves its callout and starts its time afresh. The list stays in the
+    // order the calls were heard, the newest last.
+    for (int i = m_ft8WaterfallCallouts.size() - 1; i >= 0; --i) {
+        if (!call.isEmpty() && m_ft8WaterfallCallouts.at(i).call == call) {
+            m_ft8WaterfallCallouts.removeAt(i);
         }
+    }
+    if (m_ft8WaterfallCallouts.size() >= 256) {   // bounds the memory only
+        m_ft8WaterfallCallouts.removeFirst();
     }
 
     m_ft8WaterfallCallouts.append(callout);
@@ -19857,27 +19951,37 @@ void MainWindow::updateFt8WaterfallOverlays()
 
     QVector<WaterfallTextOverlay> overlays;
     if (ui->cmbMode != nullptr && Ft8Mode::isFamilyMode(ui->cmbMode->currentText())) {
+        const QString mode = ui->cmbMode->currentText();
+        // Width of one signal from its base tone, the same as the RX/TX markers.
+        const double bandwidthHz = Ft8Mode::signalBandwidthHz(mode);
         const QDateTime now = QDateTime::currentDateTimeUtc();
         QVector<Ft8WaterfallCallout> kept;
         kept.reserve(m_ft8WaterfallCallouts.size());
         for (const Ft8WaterfallCallout &callout : m_ft8WaterfallCallouts) {
-            if (callout.expiresUtc.isValid() && callout.expiresUtc <= now) {
+            const qint64 ageMs = callout.heardUtc.isValid() ? qMax(qint64{0}, callout.heardUtc.msecsTo(now)) : 0;
+            if (callout.durationMs <= 0 || ageMs >= callout.durationMs) {
                 continue;
             }
             kept.append(callout);
-
+        }
+        m_ft8WaterfallCallouts = kept;
+        // newest first: the newest call has the first choice of row
+        for (int i = kept.size() - 1; i >= 0; --i) {
+            const Ft8WaterfallCallout &callout = kept.at(i);
+            const qint64 ageMs = qMax(qint64{0}, callout.heardUtc.msecsTo(now));
             WaterfallTextOverlay overlay;
             overlay.frequencyHz = static_cast<double>(callout.frequencyHz);
+            overlay.bandwidthHz = bandwidthHz;
+            overlay.alpha = cq_spots::fade(ageMs, callout.durationMs);
             overlay.label = callout.label;
             overlay.textColor = callout.color;
             overlay.backgroundColor = callout.blacklisted
                                           ? QColor(90, 0, 0, 225)
                                           : (callout.directReplyToMe
                                                 ? QColor(70, 0, 0, 220)
-                                                : QColor(0, 0, 0, 190));
+                                                : QColor(0, 0, 0, 170));
             overlays.append(overlay);
         }
-        m_ft8WaterfallCallouts = kept;
     } else {
         m_ft8WaterfallCallouts.clear();
     }
@@ -22892,6 +22996,10 @@ void MainWindow::showAppSettingsDialogPage(AppSettingsDialog::InitialPage page)
     if (m_qrzLookupPanel) m_qrzLookupPanel->setAccountCredentials(m_settings.qrzUsername, m_settings.qrzPassword);
     m_settings.schedulerQsyPlanJson = BandSchedulerDialog::serializeEntries(dialog.schedulerEntries());
     savePersistentSettings();
+    if (m_dspEngine != nullptr && ui->cmbMode != nullptr) {
+        QMetaObject::invokeMethod(m_dspEngine, "setTargetRowSeconds", Qt::QueuedConnection,
+            Q_ARG(double, waterfallTargetRowSeconds(ui->cmbMode->currentText(), m_settings.ftWaterfallRowMs)));
+    }
 
     const QString newLogbookPath = dialog.selectedLogbookPath().trimmed();
     const bool logbookPathChanged = !newLogbookPath.isEmpty() &&
@@ -23476,6 +23584,12 @@ void MainWindow::startRx()
     }
 
     const QString modeName = ui->cmbMode->currentText();
+    // The mode restored at start-up may not have passed handleModeChanged().
+    if (m_dspEngine != nullptr) QMetaObject::invokeMethod(m_dspEngine, "setTargetBinHz",
+        Qt::QueuedConnection, Q_ARG(double, waterfallTargetBinHz(modeName)));
+    if (m_dspEngine != nullptr) QMetaObject::invokeMethod(m_dspEngine, "setTargetRowSeconds",
+        Qt::QueuedConnection, Q_ARG(double, waterfallTargetRowSeconds(modeName, m_settings.ftWaterfallRowMs)));
+    if (m_waterfallWidget != nullptr) m_waterfallWidget->setPeriodMs(waterfallPeriodMs(modeName));
     const bool cwRttyMode = modeName == CwDecoder::modeName() ||
                             modeName == RttyDecoder::modeName();
     const bool fastResumeCwRtty = m_fastResumeCwRttyRxPending &&

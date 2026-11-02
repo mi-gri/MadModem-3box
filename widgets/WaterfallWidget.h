@@ -40,6 +40,16 @@ struct WaterfallTextOverlay
     QColor backgroundColor = QColor(0, 0, 0, 185);
 
     /**
+     * Static callouts (FT CQ calls): width of the signal in Hz from
+     * frequencyHz upwards, drawn as a bracket on the bottom line; 0 draws a
+     * single tick at frequencyHz. Static callouts are passed newest first.
+     */
+    double bandwidthHz = 0.0;
+
+    /** Static callouts: opacity 0..255, so a call can fade before it goes. */
+    int alpha = 255;
+
+    /**
      * When true the label is not drawn as a static callout.  Instead only new
      * characters are appended to a time-locked vertical trail beside the signal.
      * The trail then moves upward with the waterfall until it naturally leaves
@@ -102,11 +112,29 @@ signals:
     void frequencyChordClicked(double frequencyHz);
     void runtimeDiagnostic(const QString &message);
 
+    /**
+     * @brief The number of spectrum columns that maps one to one onto the
+     *        waterfall's pixels (physical, HiDPI included). Emitted, settled,
+     *        after the widget is shown or resized.
+     */
+    void displayColumnsWanted(int columns);
+
 public slots:
     /**
      * @brief Adds one new FFT intensity line.
      */
     void addLine(const QVector<quint8> &line, double minHz, double maxHz);
+
+    /**
+     * @brief UTC (ms) of the row passed with the next addLine(); 0 = unknown.
+     */
+    void setNextRowUtcMs(qint64 utcMs);
+
+    /**
+     * @brief Draws a line with the UTC at each start of a T/R period of this
+     *        length (FT8 15000, FT4 7500), as JTDX does; 0 switches it off.
+     */
+    void setPeriodMs(int periodMs);
 
     /**
      * @brief Clears the waterfall image.
@@ -242,6 +270,22 @@ private:
     double m_pendingClickFrequencyHz = 0.0;
     Qt::MouseButton m_pendingClickButton = Qt::NoButton;
     QTimer m_chordClickTimer;
+
+    // A T/R period start: the row it was drawn into, counted back from the newest.
+    struct PeriodLabel
+    {
+        QString text;
+        int ageRows = 0;
+    };
+    QVector<PeriodLabel> m_periodLabels;
+    int m_periodMs = 0;
+    qint64 m_nextRowUtcMs = 0;
+    qint64 m_lastRowPeriod = -1;
+    QTimer m_columnsTimer;
+    bool takePeriodBoundary();   // true if the next row starts a new period (and records its label)
+    void agePeriodLabels();
+    void drawPeriodLabels(QPainter &painter);
+    int plotHeight() const;      // waterfall rows' height, above the frequency scale
 
     struct VerticalTextGlyph
     {

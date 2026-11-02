@@ -243,6 +243,8 @@ public:
     QString ftHighlightMyCallForeground = "#DC0000";
     QString ftHighlightCqBackground = "#445C1C";
     QString ftHighlightCqForeground = "#FFE478";
+    int ftWaterfallRowMs = 200;             // FT8 waterfall: ms per row (FT4: half); JTDX ~290
+    int ftWaterfallCqSeconds = 30;          // CQ calls on the waterfall: seconds shown, 0 = off (as in JTDX)
     QString ftHighlightWorkedBackground = "#242424";
     QString ftHighlightWorkedForeground = "#969696";
     QString ftHighlightTxBackground = "#FFF75F";

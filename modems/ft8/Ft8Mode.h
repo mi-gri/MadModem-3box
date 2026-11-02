@@ -36,6 +36,12 @@ public:
     static Profile profileForMode(const QString &modeName);
     static QVector<FrequencyMarker> frequencyMarkers(int rxHz, int txHz,
                                                      const QString &modeName = QString());
+
+    /**
+     * @brief Bandwidth a signal occupies from its base tone, in Hz:
+     *        FT8 8 tones x 6.25 Hz = 50 Hz, FT4 4 tones x 20.83 Hz = 83.3 Hz.
+     */
+    static double signalBandwidthHz(const QString &modeName);
 };
 
 #endif // FT8MODE_H

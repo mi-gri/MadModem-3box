@@ -56,11 +56,44 @@ public slots:
     void configureReceiverFilter(const QString &modeName, int widthHz, int source);
     void setNarrowBandDisplay(bool enabled) { m_narrowBandDisplay = enabled; }
 
+    /**
+     * @brief Sets the frequency resolution the waterfall FFT aims at.
+     *
+     * The FFT length becomes the power of two closest to sampleRate / binHz
+     * (4096 .. 65536), so the resolution does not depend on the capture rate.
+     * 0 restores the default 8192-point FFT. A long FFT resolves the FT8
+     * tones (6.25 Hz apart) the way JTDX shows them, but it also averages
+     * over a long window, which would smear CW and RTTY characters, so it is
+     * meant for the FT modes. The row rate (hop) is unchanged.
+     */
+    void setTargetBinHz(double binHz);
+
+    /**
+     * @brief Averages the power spectra of consecutive windows into one
+     *        waterfall row of about this many seconds (JTDX "N Avg").
+     *
+     * 0 emits one row per window (hop), the default. The dominant-frequency
+     * and peak metrics still follow every window.
+     */
+    void setTargetRowSeconds(double seconds);
+
+    /**
+     * @brief Number of waterfall columns (256 .. 8192); the widget asks for
+     *        one per screen pixel, so no column is stretched or skipped.
+     */
+    void setColumns(int columns);
+
 signals:
     /**
      * @brief Sends one normalized waterfall intensity line.
      */
     void waterfallLineReady(const QVector<quint8> &line, double minHz, double maxHz);
+
+    /**
+     * @brief UTC (ms) of the waterfall row that follows next; emitted just
+     *        before waterfallLineReady, so period lines can be drawn on it.
+     */
+    void waterfallRowTime(qint64 utcMs);
 
     /**
      * @brief Sends the strongest detected frequency in the visible band.
@@ -96,8 +129,23 @@ private:
     QVector<float> m_fifo;
     QVector<double> m_windowTable;
 
-    int m_fftSize = 8192;
+    /**
+     * @brief Chooses the FFT length for the sample rate and target resolution.
+     */
+    void updateFftSize(int sampleRate);
+
+    static constexpr int kDefaultFftSize = 8192;
+    int m_fftSize = kDefaultFftSize;
     int m_hopSize = 2048;
+    double m_targetBinHz = 0.0;
+    int m_fftSizeSampleRate = 0;
+
+    void resetRowAverage();
+    double m_targetRowSeconds = 0.0;
+    QVector<double> m_rowPowerSum;
+    int m_rowWindows = 0;
+    qint64 m_fifoStartUtcNs = 0;      // capture UTC of m_fifo[0], 0 = unknown
+    qint64 m_windowCentreUtcMs = 0;   // UTC of the centre of the window being analysed
     int m_columns = 1024;
 
     double m_minHz = 100.0;

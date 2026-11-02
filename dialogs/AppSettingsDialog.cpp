@@ -1655,6 +1655,21 @@ QWidget *AppSettingsDialog::makeFtColourEditor()
     grid->addWidget(cqRepeatLabel, 9, 0);
     grid->addWidget(m_spinCqRepeatCount, 9, 1);
 
+    // Waterfall speed in FT8/FT4: one row averages the spectra of this time
+    // (JTDX ~290 ms). Shorter = faster scrolling, less history on screen.
+    QLabel *rowLabel = new QLabel(L(QStringLiteral("FT8 waterfall row time")), group);
+    m_spinFtWaterfallRowMs = new QSpinBox(group);
+    m_spinFtWaterfallRowMs->setObjectName(QStringLiteral("spinFtWaterfallRowMs"));
+    m_spinFtWaterfallRowMs->setRange(50, 1000);
+    m_spinFtWaterfallRowMs->setSingleStep(25);
+    m_spinFtWaterfallRowMs->setSuffix(QStringLiteral(" ms"));
+    m_spinFtWaterfallRowMs->setValue(qBound(50, m_initialSettings.ftWaterfallRowMs, 1000));
+    const QString rowTip = L(QStringLiteral("Waterfall speed in FT8: each row averages the spectrum over this time. Less is faster, more shows a longer history and calmer noise. FT4 uses half of it. JTDX: about 290 ms."));
+    rowLabel->setToolTip(rowTip);
+    m_spinFtWaterfallRowMs->setToolTip(rowTip);
+    grid->addWidget(rowLabel, 10, 0);
+    grid->addWidget(m_spinFtWaterfallRowMs, 10, 1);
+
 
     QPushButton *reset = new QPushButton(L(QStringLiteral("Reset highlight colours")), group);
     connect(reset, &QPushButton::clicked, this, [this]() {
@@ -2563,6 +2578,9 @@ void AppSettingsDialog::collectSettings()
     }
     if (m_spinCqRepeatCount != nullptr) {
         merged.ft8CqRepeatCount = m_spinCqRepeatCount->value();
+    }
+    if (m_spinFtWaterfallRowMs != nullptr) {
+        merged.ftWaterfallRowMs = m_spinFtWaterfallRowMs->value();
     }
 
     if (m_chkRotatorEnabled != nullptr) merged.rotatorEnabled = m_chkRotatorEnabled->isChecked();

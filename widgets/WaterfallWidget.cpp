@@ -1,7 +1,9 @@
 #include "FrequencyScaleTicks.h"
 #include "WaterfallWidget.h"
+#include "CqSpots.h"
 #include "../utils/SystemResourceManager.h"
 
+#include <QDateTime>
 #include <QFontMetrics>
 #include <QMouseEvent>
 #include <QPainter>
@@ -45,6 +47,12 @@ WaterfallWidget::WaterfallWidget(QWidget *parent)
         "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width:0px; }"
         "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background:palette(base); }"));
     m_frequencyScrollBar->hide();
+    // One spectrum column per physical pixel, once a resize has settled.
+    m_columnsTimer.setSingleShot(true);
+    m_columnsTimer.setInterval(300);
+    connect(&m_columnsTimer, &QTimer::timeout, this, [this]() {
+        if (width() > 0) emit displayColumnsWanted(qRound(width() * devicePixelRatioF()));
+    });
     connect(m_frequencyScrollBar, &QScrollBar::valueChanged, this, [this](int value) {
         if (m_updatingFrequencyScrollBar || m_maxHz <= m_minHz) return;
         const double fullSpan = m_maxHz - m_minHz;
@@ -125,6 +133,9 @@ void WaterfallWidget::addLine(const QVector<quint8> &line, double minHz, double 
             "Waterfall presentation resumed: existing GL history preserved; live rows continue from the current ring position"));
     }
 
+    agePeriodLabels();
+    const bool periodStart = m_scrollDirection == ScrollDirection::Down && takePeriodBoundary();
+
     if (m_scrollDirection == ScrollDirection::Down && !m_gpuFailed) {
         const int newWidth = qBound(2, line.size(), 16384);
         if (m_frequencyBins != newWidth) {
@@ -132,8 +143,18 @@ void WaterfallWidget::addLine(const QVector<quint8> &line, double minHz, double 
             m_gpuTextureNeedsRecreate = true;
             m_gpuClearPending = true;
             m_pendingGpuRows.clear();
+            m_periodLabels.clear();
         }
         QByteArray row = rgbaRowForLine(line);
+        if (periodStart) {
+            // the period line: the row lightened towards grey, as in JTDX
+            for (int i = 0; i + 2 < row.size(); i += 4) {
+                for (int c = 0; c < 3; ++c) {
+                    const int v = static_cast<unsigned char>(row[i + c]);
+                    row[i + c] = static_cast<char>((v + 3 * 200) / 4);
+                }
+            }
+        }
         if (!row.isEmpty()) {
             const int queueLimit = qBound(32, qMax(1, height() / 2), 128);
             while (m_pendingGpuRows.size() >= queueLimit) {
@@ -213,6 +234,9 @@ void WaterfallWidget::addLine(const QVector<quint8> &line, double minHz, double 
         const double ratio = static_cast<double>(x) / qMax(1, imageWidth - 1);
         const int value = static_cast<int>(sampleLine(ratio));
         dst[x] = colorForIntensity(static_cast<quint8>(qBound(0, value, 255)));
+        if (periodStart) {
+            dst[x] = qRgb((qRed(dst[x]) + 600) / 4, (qGreen(dst[x]) + 600) / 4, (qBlue(dst[x]) + 600) / 4);
+        }
     }
 
     ageVerticalTextTrails();
@@ -233,8 +257,88 @@ void WaterfallWidget::clear()
 
     m_verticalTextGlyphs.clear();
     m_verticalTrailLastLabelByStream.clear();
+    m_periodLabels.clear();
 
     requestRepaint();
+}
+
+void WaterfallWidget::setNextRowUtcMs(qint64 utcMs)
+{
+    m_nextRowUtcMs = utcMs;
+}
+
+void WaterfallWidget::setPeriodMs(int periodMs)
+{
+    periodMs = qMax(0, periodMs);
+    if (periodMs == m_periodMs) {
+        return;
+    }
+    m_periodMs = periodMs;
+    m_lastRowPeriod = -1;
+    m_periodLabels.clear();
+    requestRepaint();
+}
+
+bool WaterfallWidget::takePeriodBoundary()
+{
+    if (m_periodMs <= 0 || m_nextRowUtcMs <= 0) {
+        return false;
+    }
+    const qint64 period = m_nextRowUtcMs / m_periodMs;
+    const bool boundary = m_lastRowPeriod >= 0 && period != m_lastRowPeriod;
+    m_lastRowPeriod = period;
+    if (boundary) {
+        PeriodLabel label;
+        label.text = QDateTime::fromMSecsSinceEpoch(period * m_periodMs, Qt::UTC).toString(QStringLiteral("HH:mm:ss"));
+        m_periodLabels.append(label);
+    }
+    return boundary;
+}
+
+void WaterfallWidget::agePeriodLabels()
+{
+    if (m_periodLabels.isEmpty()) {
+        return;
+    }
+    const int maxAge = qMax(16, m_gpuTextureHeight > 0 ? m_gpuTextureHeight : plotHeight());
+    QVector<PeriodLabel> alive;
+    alive.reserve(m_periodLabels.size());
+    for (PeriodLabel label : std::as_const(m_periodLabels)) {
+        ++label.ageRows;
+        if (label.ageRows < maxAge) alive.append(label);
+    }
+    m_periodLabels = alive;
+}
+
+int WaterfallWidget::plotHeight() const
+{
+    return qMax(1, height() - bottomScaleBandHeight());
+}
+
+void WaterfallWidget::drawPeriodLabels(QPainter &painter)
+{
+    if (m_periodLabels.isEmpty() || m_scrollDirection != ScrollDirection::Down) {
+        return;
+    }
+    // The rows fill the plot above the frequency scale, the newest at the
+    // bottom; a row's age therefore gives its height on the screen.
+    const int rows = qMax(1, m_gpuTextureHeight > 0 && !m_gpuFailed ? m_gpuTextureHeight : plotHeight());
+    const double rowPx = static_cast<double>(plotHeight()) / rows;
+    QFont font = painter.font();
+    font.setBold(false);
+    font.setPointSize(8);
+    const QFontMetrics fm(font);
+    painter.save();
+    painter.setFont(font);
+    for (const PeriodLabel &label : std::as_const(m_periodLabels)) {
+        const int y = qRound(plotHeight() - (label.ageRows + 0.5) * rowPx);
+        if (y < fm.height() || y > plotHeight()) continue;
+        const QRect r(4, y - fm.height() - 1, fm.horizontalAdvance(label.text) + 6, fm.height());
+        painter.fillRect(r, QColor(0, 0, 0, 150));
+        painter.setPen(QColor(230, 230, 230));
+        painter.drawText(r, Qt::AlignCenter, label.text);
+    }
+    painter.restore();
 }
 
 void WaterfallWidget::setMarkers(const QVector<FrequencyMarker> &markers)
@@ -444,6 +548,7 @@ void WaterfallWidget::paintGL()
 
     painter.setRenderHint(QPainter::Antialiasing, false);
     drawFrequencyScale(painter);
+    drawPeriodLabels(painter);
     drawMarkers(painter);
     drawTextOverlays(painter);
     QVector<double> protectedFrequencies;
@@ -650,6 +755,7 @@ void WaterfallWidget::wheelEvent(QWheelEvent *event)
 
 void WaterfallWidget::resizeGL(int width, int height)
 {
+    m_columnsTimer.start();
     if (width <= 0 || height <= 0) {
         m_image = QImage();
         return;
@@ -892,20 +998,41 @@ void WaterfallWidget::drawMarkers(QPainter &painter)
     int visibleLabelIndex = 0;
 
     for (const FrequencyMarker &marker : m_markers) {
-        if (marker.frequencyHz < visibleMinHz() || marker.frequencyHz > visibleMaxHz()) {
+        const double bw = qMax(0.0, marker.bandwidthHz);
+        const double lowHz = marker.centred ? marker.frequencyHz - bw / 2.0 : marker.frequencyHz;
+        const double highHz = lowHz + bw;
+        if (highHz < visibleMinHz() || lowHz > visibleMaxHz()) {
             continue;
         }
 
-        const int x = frequencyToX(marker.frequencyHz);
+        int x = frequencyToX(marker.frequencyHz);
 
         QPen markerPen(marker.color);
         markerPen.setWidth(qMax(1, marker.width));
         if (marker.dashed) {
             markerPen.setStyle(Qt::DashLine);
         }
-        painter.setPen(markerPen);
         const int plotBottom = qMax(0, height() - bottomScaleBandHeight() - 1);
-        painter.drawLine(x, 0, x, plotBottom);
+        if (bw > 0.0) {
+            // The band the signal occupies: a light tint between two edge
+            // lines, so the signals in it stay visible, and a solid bar on the
+            // frequency scale, like the RX/TX brackets of JTDX/WSJT-X.
+            const int x1 = frequencyToX(lowHz);
+            const int x2 = qMax(x1 + 2, frequencyToX(highHz));
+            QColor tint = marker.color;
+            tint.setAlpha(34);
+            painter.fillRect(QRect(x1, 0, x2 - x1 + 1, plotBottom), tint);
+            QPen edgePen = markerPen;
+            edgePen.setWidth(1);
+            painter.setPen(edgePen);
+            painter.drawLine(x1, 0, x1, plotBottom);
+            painter.drawLine(x2, 0, x2, plotBottom);
+            painter.fillRect(QRect(x1, plotBottom + 1, x2 - x1 + 1, 4), marker.color);
+            x = x2;   // the label goes beside the band
+        } else {
+            painter.setPen(markerPen);
+            painter.drawLine(x, 0, x, plotBottom);
+        }
 
         if (!marker.label.trimmed().isEmpty()) {
 #if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
@@ -957,74 +1084,92 @@ void WaterfallWidget::drawTextOverlays(QPainter &painter)
         return;
     }
 
+    // FT callouts (CQ calls, replies to me), as in JTDX 3box: painted over the
+    // waterfall's bottom edge - the newest rows, where the decoded signals
+    // still are - each over its signal: a bracket as wide as the signal on
+    // the bottom line, the call in a label above it. Where signals lie close
+    // together the labels go in rows above one another (CqSpots.h), joined to
+    // their brackets by a thin line. A call for which no row is left keeps its
+    // bracket, and the top right corner counts them: "+3".
     QFont overlayFont = painter.font();
-    overlayFont.setBold(true);
-    overlayFont.setPointSize(9);
-    painter.setFont(overlayFont);
-
+    overlayFont.setBold(false);
+    overlayFont.setPointSize(8);   // small: the narrower the labels, the more of them fit
     const QFontMetrics fm(overlayFont);
-    const int paddingX = 6;
-    const int paddingY = 2;
-    const int labelHeight = fm.height() + paddingY * 2;
-    const int usableBottom = qMax(0, height() - bottomScaleBandHeight() - 4);
-    QVector<QRect> occupied;
+    const int rowH = fm.height() + 2;
+    const int base = qMax(0, height() - bottomScaleBandHeight() - 3);   // the line the brackets stand on
+    if (base < rowH + 8) {
+        return;
+    }
+    const int rows = qMax(1, qMin(cq_spots::max_rows, base / 2 / rowH));   // at most half the height
 
+    struct Shown {
+        int x1;
+        int x2;
+        const WaterfallTextOverlay *overlay;
+    };
+    std::vector<Shown> shown;
+    std::vector<cq_spots::Box> boxes;
     for (const WaterfallTextOverlay &overlay : m_textOverlays) {
+        const double bw = qMax(0.0, overlay.bandwidthHz);
         if (overlay.label.trimmed().isEmpty() ||
-            overlay.frequencyHz < visibleMinHz() || overlay.frequencyHz > visibleMaxHz()) {
+            overlay.frequencyHz + bw < visibleMinHz() || overlay.frequencyHz > visibleMaxHz()) {
             continue;
         }
-
-        const int x = frequencyToX(overlay.frequencyHz);
-
+        Shown s;
+        s.x1 = frequencyToX(overlay.frequencyHz);
+        s.x2 = frequencyToX(overlay.frequencyHz + bw);
+        s.overlay = &overlay;
+        shown.push_back(s);
 #if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
         const int textWidth = fm.horizontalAdvance(overlay.label);
 #else
         const int textWidth = fm.width(overlay.label);
 #endif
-
-        const int labelWidth = textWidth + paddingX * 2;
-        int left = x - labelWidth / 2;
-        left = qBound(2, left, qMax(2, width() - labelWidth - 2));
-
-        // Decodes are known only after the 15-second FT8 slot closes.  Draw
-        // the callout near the recent trace area, then step upward if several
-        // labels would overlap.  This keeps CQ and direct-reply labels readable
-        // without disturbing the permanent RX/TX markers.
-        int top = qMax(2, usableBottom - labelHeight - 8);
-        QRect rect(left, top, labelWidth, labelHeight);
-        int guard = 0;
-        while (guard < 12) {
-            bool overlaps = false;
-            for (const QRect &used : occupied) {
-                if (rect.adjusted(-3, -2, 3, 2).intersects(used)) {
-                    overlaps = true;
-                    break;
-                }
-            }
-            if (!overlaps) {
-                break;
-            }
-            rect.moveTop(qMax(2, rect.top() - labelHeight - 4));
-            ++guard;
-        }
-        occupied.append(rect);
-
-        painter.fillRect(rect, overlay.backgroundColor);
-        painter.setPen(QColor(255, 255, 255, 120));
-        painter.drawRect(rect.adjusted(0, 0, -1, -1));
-
-        painter.setPen(overlay.textColor);
-        painter.drawText(rect.adjusted(paddingX, paddingY, -paddingX, -paddingY),
-                         Qt::AlignVCenter | Qt::AlignLeft,
-                         overlay.label);
-
-        QPen guidePen(overlay.textColor);
-        guidePen.setWidth(1);
-        guidePen.setStyle(Qt::DashLine);
-        painter.setPen(guidePen);
-        painter.drawLine(x, rect.bottom(), x, usableBottom);
+        boxes.push_back(cq_spots::Box {(s.x1 + s.x2) / 2, textWidth + 4});
     }
+    if (shown.empty()) {
+        return;
+    }
+    const std::vector<cq_spots::Slot> placed = cq_spots::stack(boxes, width(), rows, 2);
+
+    painter.save();
+    painter.setFont(overlayFont);
+    auto withAlpha = [](QColor c, int alpha) {
+        c.setAlpha(qBound(0, c.alpha() * alpha / 255, 255));
+        return c;
+    };
+    for (std::size_t i = 0; i < shown.size(); ++i) {   // brackets, and the lines up to labels in upper rows
+        const Shown &s = shown[i];
+        painter.setPen(QPen(withAlpha(s.overlay->textColor, s.overlay->alpha), 1));
+        painter.drawLine(s.x1, base, s.x2, base);
+        painter.drawLine(s.x1, base - 3, s.x1, base);
+        painter.drawLine(s.x2, base - 3, s.x2, base);
+        if (placed[i].row > 0) {
+            painter.drawLine(boxes[i].centre, base - 3, boxes[i].centre, base - 4 - placed[i].row * rowH);
+        }
+    }
+    int hidden = 0;
+    for (std::size_t i = 0; i < shown.size(); ++i) {   // the labels, over the lines
+        if (placed[i].row < 0) {
+            ++hidden;
+            continue;
+        }
+        const WaterfallTextOverlay &o = *shown[i].overlay;
+        const int bottom = base - 4 - placed[i].row * rowH;
+        const QRect r(placed[i].left, bottom - (rowH - 2), boxes[i].width, rowH - 2);
+        painter.fillRect(r, withAlpha(o.backgroundColor, o.alpha));
+        painter.setPen(withAlpha(o.textColor, o.alpha));
+        painter.drawText(r, Qt::AlignCenter, o.label);
+    }
+    if (hidden > 0) {   // calls with no room: a count, top right of the waterfall
+        const QString more = QStringLiteral("+%1").arg(hidden);
+        const int w = fm.boundingRect(more).width() + 6;
+        const QRect r(width() - w - 6, 34, w, rowH - 2);   // under the marker captions
+        painter.fillRect(r, QColor(0, 0, 0, 170));
+        painter.setPen(QColor(255, 220, 0));
+        painter.drawText(r, Qt::AlignCenter, more);
+    }
+    painter.restore();
 }
 
 
@@ -1535,7 +1680,7 @@ void WaterfallWidget::ensureGpuTexture()
         return;
     }
     const int targetWidth = qBound(2, m_frequencyBins, 16384);
-    const int targetHeight = qMax(1, height());
+    const int targetHeight = plotHeight();
     // Height changes are presentation-only. Keep the already allocated ring
     // instead of destroying its history every time a layout changes by a few
     // pixels. Recreate only for first allocation or a true spectrum-width
@@ -1564,6 +1709,7 @@ void WaterfallWidget::ensureGpuTexture()
 
     m_gpuTextureWidth = targetWidth;
     m_gpuTextureHeight = targetHeight;
+    m_periodLabels.clear();
     m_gpuWriteRow = 0;
     m_gpuTextureNeedsRecreate = false;
     m_gpuClearPending = true;
@@ -1646,9 +1792,11 @@ void WaterfallWidget::drawGpuWaterfall()
     // QWidget geometry.  Scale the viewport by DPR or the circular texture is
     // rendered only into the lower-left part of the waterfall on HiDPI screens.
     const qreal dpr = devicePixelRatioF();
-    glViewport(0, 0,
+    // The rows go above the frequency scale only: under its translucent band
+    // the newest rows - with a slow FT row rate, the last seconds - would hide.
+    glViewport(0, qRound(static_cast<qreal>(bottomScaleBandHeight()) * dpr),
                qMax(1, qRound(static_cast<qreal>(width()) * dpr)),
-               qMax(1, qRound(static_cast<qreal>(height()) * dpr)));
+               qMax(1, qRound(static_cast<qreal>(plotHeight()) * dpr)));
     // A QPainter pass follows every GL pass.  Reset the state that its OpenGL
     // paint engine can preserve between PartialUpdate-style frames; otherwise
     // old label pixels may remain and accumulate as fuzzy text.

@@ -2249,6 +2249,16 @@ for _key, _translations in TX_LEVEL_KEYS.items():
     for _lang, _value in _translations.items():
         KEY_EXACT.setdefault(_lang, {})[_key] = _value
 
+from ft_waterfall_cq_i18n import KEYS as FT_WATERFALL_CQ_KEYS
+for _key, _translations in FT_WATERFALL_CQ_KEYS.items():
+    for _lang, _value in _translations.items():
+        KEY_EXACT.setdefault(_lang, {})[_key] = _value
+
+from ft_waterfall_cq_i18n import SOURCES as FT_WATERFALL_SOURCES
+for _source, _translations in FT_WATERFALL_SOURCES.items():
+    for _lang, _value in _translations.items():
+        KEY_EXACT.setdefault(_lang, {})["text." + norm_key(_source)] = _value
+
 from sstv_editor_i18n import LANGS as SSTV_LANGS, PHRASES as SSTV_PHRASES
 for _source, _translations in SSTV_PHRASES.items():
     for _lang, _value in zip(SSTV_LANGS, _translations):

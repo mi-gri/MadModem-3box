@@ -1,5 +1,6 @@
 #include "DspEngine.h"
 
+#include <QDateTime>
 #include <QtMath>
 
 #include <algorithm>
@@ -28,17 +29,32 @@ void DspEngine::processAudioBlock(const AudioBlock &block)
     if (m_continuity.accept(block)) {
         m_fifo.clear();
         m_waterfallLeveler.reset();
+        resetRowAverage();
+    }
+    updateFftSize(block.sampleRate);
+    if (m_fifo.isEmpty()) {
+        m_fifoStartUtcNs = block.firstSampleUtcNs;   // 0: the producer has no capture time
     }
     m_fifo += block.samples;
     m_windowScratch.resize(m_fftSize);
+    const double nsPerSample = 1.0e9 / static_cast<double>(block.sampleRate);
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     int consumed = 0;
     while (m_fifo.size() - consumed >= m_fftSize) {
         std::copy_n(m_fifo.constBegin() + consumed, m_fftSize, m_windowScratch.begin());
+        // UTC of the window centre: from the capture time where there is one,
+        // else estimated from the clock and what is still buffered.
+        const double centreOffset = static_cast<double>(consumed) + m_fftSize / 2.0;
+        m_windowCentreUtcMs = m_fifoStartUtcNs > 0
+            ? (m_fifoStartUtcNs + static_cast<qint64>(centreOffset * nsPerSample)) / 1000000
+            : nowMs - static_cast<qint64>((static_cast<double>(m_fifo.size()) - centreOffset) * nsPerSample / 1.0e6);
         analyzeWindow(m_windowScratch, block.sampleRate);
         consumed += m_hopSize;
     }
-    if (consumed > 0) m_fifo.remove(0, consumed);
-
+    if (consumed > 0) {
+        m_fifo.remove(0, consumed);
+        if (m_fifoStartUtcNs > 0) m_fifoStartUtcNs += static_cast<qint64>(consumed * nsPerSample);
+    }
 }
 
 void DspEngine::reset()
@@ -46,6 +62,69 @@ void DspEngine::reset()
     m_fifo.clear();
     m_continuity.reset();
     m_waterfallLeveler.reset();
+    resetRowAverage();
+}
+
+void DspEngine::setTargetRowSeconds(double seconds)
+{
+    m_targetRowSeconds = (seconds > 0.0 && qIsFinite(seconds)) ? seconds : 0.0;
+    resetRowAverage();
+}
+
+void DspEngine::setColumns(int columns)
+{
+    columns = qBound(256, columns, 8192);
+    if (columns == m_columns) {
+        return;
+    }
+    m_columns = columns;
+    m_waterfallLeveler.reset();
+    resetRowAverage();
+}
+
+void DspEngine::resetRowAverage()
+{
+    m_rowPowerSum.clear();
+    m_rowWindows = 0;
+}
+
+void DspEngine::setTargetBinHz(double binHz)
+{
+    m_targetBinHz = (binHz > 0.0 && qIsFinite(binHz)) ? binHz : 0.0;
+    m_fftSizeSampleRate = 0; // re-evaluated with the next audio block
+}
+
+void DspEngine::updateFftSize(int sampleRate)
+{
+    if (sampleRate == m_fftSizeSampleRate) {
+        return;
+    }
+    m_fftSizeSampleRate = sampleRate;
+
+    int size = kDefaultFftSize;
+    if (m_targetBinHz > 0.0 && sampleRate > 0) {
+        const double wanted = static_cast<double>(sampleRate) / m_targetBinHz;
+        size = 4096;
+        // closest power of two on a log scale
+        while (size < 65536 && static_cast<double>(size) * qSqrt(2.0) < wanted) {
+            size *= 2;
+        }
+    }
+    if (size == m_fftSize) {
+        return;
+    }
+    m_fftSize = size;
+    // Keep only what one new window needs, so a shorter FFT does not
+    // analyse a burst of stale overlapping windows at once.
+    if (m_fifo.size() > m_fftSize) {
+        const int dropped = m_fifo.size() - m_fftSize;
+        m_fifo.remove(0, dropped);
+        if (m_fifoStartUtcNs > 0 && sampleRate > 0) {
+            m_fifoStartUtcNs += static_cast<qint64>(dropped * (1.0e9 / sampleRate));
+        }
+    }
+    m_waterfallLeveler.reset();
+    resetRowAverage();
 }
 
 void DspEngine::configureSignalPeakMetric(bool enabled, int lowHz, int highHz)
@@ -93,79 +172,127 @@ void DspEngine::analyzeWindow(const QVector<float> &window, int sampleRate)
                           static_cast<double>(m_fftSize);
     }
 
-    QVector<double> dbLine;
-    dbLine.resize(m_columns);
-
-    QVector<quint8> waterfallLine;
-    waterfallLine.resize(m_columns);
-
-    double bestDb = -200.0;
-    double bestFrequency = 0.0;
-
     const double log10 = qLn(10.0);
+    const double binsPerHz = static_cast<double>(m_fftSize) / static_cast<double>(sampleRate);
+    const double columnHz = (m_maxHz - m_minHz) / static_cast<double>(m_columns - 1);
+    const double binsPerColumn = columnHz * binsPerHz;
 
-    for (int x = 0; x < m_columns; ++x) {
+    // Magnitude shown in waterfall column x, from a spectrum of magnitudes.
+    auto columnMagnitude = [&](const QVector<double> &mags, int x, double *freqOut) {
         const double ratio = static_cast<double>(x) / static_cast<double>(m_columns - 1);
         const double freq = m_minHz + ratio * (m_maxHz - m_minHz);
-        const double binPosition = (freq * static_cast<double>(m_fftSize)) /
-                                   static_cast<double>(sampleRate);
+        if (freqOut != nullptr) *freqOut = freq;
+        const double binPosition = freq * binsPerHz;
+        double mag = 0.0;
+        if (binsPerColumn > 1.0) {
+            // A column spans several FFT bins: show the strongest of them.
+            // Interpolating between two bins would skip the others, and a
+            // narrow signal falling between them would vanish from the row.
+            const int first = qBound(1, static_cast<int>(qCeil(binPosition - binsPerColumn / 2.0)), maxBin + 1);
+            const int last = qBound(first, static_cast<int>(qFloor(binPosition + binsPerColumn / 2.0)), maxBin + 1);
+            for (int bin = first; bin <= last; ++bin) {
+                mag = qMax(mag, mags[bin]);
+            }
+        } else {
+            const int bin0 = qBound(1, static_cast<int>(qFloor(binPosition)), maxBin);
+            const int bin1 = qBound(1, bin0 + 1, maxBin + 1);
+            const double frac = qBound(0.0, binPosition - static_cast<double>(bin0), 1.0);
+            mag = ((1.0 - frac) * mags[bin0]) + (frac * mags[bin1]);
+        }
+        return mag;
+    };
 
-        const int bin0 = qBound(1, static_cast<int>(qFloor(binPosition)), maxBin);
-        const int bin1 = qBound(1, bin0 + 1, maxBin + 1);
-        const double frac = qBound(0.0, binPosition - static_cast<double>(bin0), 1.0);
-        const double mag = ((1.0 - frac) * magnitudes[bin0]) + (frac * magnitudes[bin1]);
-        const double db = 20.0 * qLn(qMax(mag, 1.0e-12)) / log10;
-        dbLine[x] = db;
-
+    // The strongest frequency of this window (not of the averaged row).
+    double bestDb = -200.0;
+    double bestFrequency = 0.0;
+    for (int x = 0; x < m_columns; ++x) {
+        double freq = 0.0;
+        const double db = 20.0 * qLn(qMax(columnMagnitude(magnitudes, x, &freq), 1.0e-12)) / log10;
         if (db > bestDb) {
             bestDb = db;
             bestFrequency = freq;
         }
     }
 
-    /*
-     * Display-only WSJT-X-style flattening.
-     *
-     * WSJT-X Wide Graph does not let a slow temporal AGC chase the absolute
-     * receiver level.  Its default Flatten path converts each row to dB,
-     * estimates a lower-envelope polynomial from the lowest 10% of each of
-     * ten frequency segments, then subtracts that baseline before applying a
-     * fixed gain/zero colour mapping.  This reacts immediately to receiver
-     * AGC steps without leaving the whole passband orange for many seconds.
-     *
-     * Narrow receiver noise shelves receive a local lower-envelope correction.
-     * No frequency bins are cropped, and decoder audio is untouched.
-     */
-    std::vector<double> levelInput;
-    levelInput.reserve(static_cast<std::size_t>(dbLine.size()));
-    for (double value : dbLine) levelInput.push_back(value);
-    const double lineSeconds = static_cast<double>(m_hopSize) /
-                               static_cast<double>(sampleRate);
-    const int receiverWidth = m_receiverFilterAge.isValid() && m_receiverFilterAge.elapsed() < 45000 ? m_receiverWidthHz : 0;
-    const WaterfallLevelResult levels =
-        m_waterfallLeveler.update(levelInput, lineSeconds,
-            (m_maxHz - m_minHz) / static_cast<double>(m_columns - 1),
-            receiverWidth, m_narrowBandDisplay || (receiverWidth >= 50 && receiverWidth <= 1000));
-    const bool haveBaseline = levels.baselineDb.size() ==
-                              static_cast<std::size_t>(dbLine.size());
-
-    for (int x = 0; x < m_columns; ++x) {
-        const double baselineDb = haveBaseline
-            ? levels.baselineDb[static_cast<std::size_t>(x)]
-            : levels.floorDb;
-        const double flattenedDb = dbLine[x] - baselineDb;
-
-        // Equivalent to the WSJT-X Wide Graph default transfer:
-        //     y1 = 10 * gain * flattened_dB + zero
-        // The user colour-scale control supplies the gain in WaterfallWidget;
-        // zero remains 0 so the lower envelope maps to black/dark blue.
-        const double rawValue = 10.0 * flattenedDb;
-        const int value = qBound(0, static_cast<int>(qRound(rawValue)), 254);
-
-        waterfallLine[x] = static_cast<quint8>(value);
+    // A waterfall row is the power average of rowWindows consecutive windows,
+    // as JTDX/WSJT-X average their spectra ("N Avg"): one row per ~0.3 s in
+    // FT8, so several 15-s periods fit on the screen and the noise is calmer.
+    const int rowWindows = m_targetRowSeconds > 0.0
+        ? qBound(1, qRound(m_targetRowSeconds * sampleRate / static_cast<double>(m_hopSize)), 64)
+        : 1;
+    if (m_rowPowerSum.size() != magnitudes.size()) {
+        m_rowPowerSum.fill(0.0, magnitudes.size());
+        m_rowWindows = 0;
     }
+    for (int bin = 0; bin < magnitudes.size(); ++bin) {
+        m_rowPowerSum[bin] += magnitudes[bin] * magnitudes[bin];
+    }
+    ++m_rowWindows;
+    if (m_rowWindows >= rowWindows) {
+        const QVector<double> *rowMags = &magnitudes;
+        QVector<double> averaged;
+        if (m_rowWindows > 1) {
+            averaged.resize(magnitudes.size());
+            for (int bin = 0; bin < magnitudes.size(); ++bin) {
+                averaged[bin] = qSqrt(m_rowPowerSum[bin] / m_rowWindows);
+            }
+            rowMags = &averaged;
+        }
+        const double lineSeconds = static_cast<double>(m_hopSize) * m_rowWindows /
+                                   static_cast<double>(sampleRate);
+        m_rowPowerSum.fill(0.0);
+        m_rowWindows = 0;
 
-    emit waterfallLineReady(waterfallLine, m_minHz, m_maxHz);
+        QVector<double> dbLine;
+        dbLine.resize(m_columns);
+        QVector<quint8> waterfallLine;
+        waterfallLine.resize(m_columns);
+        for (int x = 0; x < m_columns; ++x) {
+            dbLine[x] = 20.0 * qLn(qMax(columnMagnitude(*rowMags, x, nullptr), 1.0e-12)) / log10;
+        }
+
+        /*
+         * Display-only WSJT-X-style flattening.
+         *
+         * WSJT-X Wide Graph does not let a slow temporal AGC chase the absolute
+         * receiver level.  Its default Flatten path converts each row to dB,
+         * estimates a lower-envelope polynomial from the lowest 10% of each of
+         * ten frequency segments, then subtracts that baseline before applying a
+         * fixed gain/zero colour mapping.  This reacts immediately to receiver
+         * AGC steps without leaving the whole passband orange for many seconds.
+         *
+         * Narrow receiver noise shelves receive a local lower-envelope correction.
+         * No frequency bins are cropped, and decoder audio is untouched.
+         */
+        std::vector<double> levelInput;
+        levelInput.reserve(static_cast<std::size_t>(dbLine.size()));
+        for (double value : dbLine) levelInput.push_back(value);
+        const int receiverWidth = m_receiverFilterAge.isValid() && m_receiverFilterAge.elapsed() < 45000 ? m_receiverWidthHz : 0;
+        const WaterfallLevelResult levels =
+            m_waterfallLeveler.update(levelInput, lineSeconds, columnHz,
+                receiverWidth, m_narrowBandDisplay || (receiverWidth >= 50 && receiverWidth <= 1000));
+        const bool haveBaseline = levels.baselineDb.size() ==
+                                  static_cast<std::size_t>(dbLine.size());
+
+        for (int x = 0; x < m_columns; ++x) {
+            const double baselineDb = haveBaseline
+                ? levels.baselineDb[static_cast<std::size_t>(x)]
+                : levels.floorDb;
+            const double flattenedDb = dbLine[x] - baselineDb;
+
+            // Equivalent to the WSJT-X Wide Graph default transfer:
+            //     y1 = 10 * gain * flattened_dB + zero
+            // The user colour-scale control supplies the gain in WaterfallWidget;
+            // zero remains 0 so the lower envelope maps to black/dark blue.
+            const double rawValue = 10.0 * flattenedDb;
+            const int value = qBound(0, static_cast<int>(qRound(rawValue)), 254);
+
+            waterfallLine[x] = static_cast<quint8>(value);
+        }
+
+        emit waterfallRowTime(m_windowCentreUtcMs);
+        emit waterfallLineReady(waterfallLine, m_minHz, m_maxHz);
+    }
 
     // QSO signal peak metric. Reuse the FFT that was already required for the
     // waterfall instead of running Welch/FFT work in MainWindow. The metric is

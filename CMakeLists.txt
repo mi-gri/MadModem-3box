@@ -438,6 +438,7 @@ add_executable(MadModem
     audio/FtTxWorker.h
     audio/AudioBlock.h
     widgets/WaterfallWidget.h
+    widgets/CqSpots.h
     widgets/SkimmerOverlay.cpp widgets/SkimmerOverlay.h
     widgets/WaterfallWidget.cpp
     widgets/RttyScopeWidget.h
@@ -1236,6 +1237,11 @@ if(BUILD_TESTING)
     target_include_directories(madmodem_receiver_filter_regression PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(madmodem_receiver_filter_regression PRIVATE Qt${QT_VERSION_MAJOR}::Core)
     add_test(NAME madmodem_receiver_filter_regression COMMAND madmodem_receiver_filter_regression)
+    add_executable(madmodem_waterfall_cq_regression
+        tests/WaterfallCqRegression.cpp dsp/WaterfallLeveler.cpp dsp/DspEngine.cpp widgets/CqSpots.h)
+    target_include_directories(madmodem_waterfall_cq_regression PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(madmodem_waterfall_cq_regression PRIVATE Qt${QT_VERSION_MAJOR}::Core)
+    add_test(NAME madmodem_waterfall_cq_regression COMMAND madmodem_waterfall_cq_regression)
 
     if(UNIX)
         add_test(NAME madmodem_cw_native_regression

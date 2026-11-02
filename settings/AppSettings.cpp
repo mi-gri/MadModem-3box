@@ -606,6 +606,8 @@ void AppSettings::load()
     ftHighlightMyCallForeground = safeColourName(settings.value("FT8/highlightMyCallForeground", ftHighlightMyCallForeground), "#DC0000");
     ftHighlightCqBackground = safeColourName(settings.value("FT8/highlightCqBackground", ftHighlightCqBackground), "#E8FFE8");
     ftHighlightCqForeground = safeColourName(settings.value("FT8/highlightCqForeground", ftHighlightCqForeground), "#145014");
+    ftWaterfallCqSeconds = qBound(0, settings.value("FT8/waterfallCqSeconds", ftWaterfallCqSeconds).toInt(), 600);
+    ftWaterfallRowMs = qBound(50, settings.value("FT8/waterfallRowMs", ftWaterfallRowMs).toInt(), 1000);
     ftHighlightWorkedBackground = safeColourName(settings.value("FT8/highlightWorkedBackground", ftHighlightWorkedBackground), "#F0F0F0");
     ftHighlightWorkedForeground = safeColourName(settings.value("FT8/highlightWorkedForeground", ftHighlightWorkedForeground), "#777777");
     ftHighlightTxBackground = safeColourName(settings.value("FT8/highlightTxBackground", ftHighlightTxBackground), "#FFF75F");
@@ -976,6 +978,8 @@ bool AppSettings::save() const
     settings.setValue("FT8/highlightMyCallForeground", ftHighlightMyCallForeground);
     settings.setValue("FT8/highlightCqBackground", ftHighlightCqBackground);
     settings.setValue("FT8/highlightCqForeground", ftHighlightCqForeground);
+    settings.setValue("FT8/waterfallCqSeconds", ftWaterfallCqSeconds);
+    settings.setValue("FT8/waterfallRowMs", ftWaterfallRowMs);
     settings.setValue("FT8/highlightWorkedBackground", ftHighlightWorkedBackground);
     settings.setValue("FT8/highlightWorkedForeground", ftHighlightWorkedForeground);
     settings.setValue("FT8/highlightTxBackground", ftHighlightTxBackground);

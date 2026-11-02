@@ -66,13 +66,23 @@ QVector<FrequencyMarker> Ft8Mode::frequencyMarkers(int rxHz, int txHz, const QSt
     rx.frequencyHz = static_cast<double>(rxHz);
     rx.label = p.shortLabel + QStringLiteral(" RX focus");
     rx.color = QColor(0, 190, 70);
+    rx.bandwidthHz = signalBandwidthHz(p.modeName);
     markers.append(rx);
 
     FrequencyMarker tx;
     tx.frequencyHz = static_cast<double>(txHz);
     tx.label = p.shortLabel + QStringLiteral(" TX marker");
     tx.color = QColor(220, 0, 0);
+    tx.bandwidthHz = signalBandwidthHz(p.modeName);
     markers.append(tx);
 
     return markers;
+}
+
+double Ft8Mode::signalBandwidthHz(const QString &modeName)
+{
+    if (modeName.trimmed().compare(QStringLiteral("FT4"), Qt::CaseInsensitive) == 0) {
+        return 4.0 * 12000.0 / 576.0;
+    }
+    return 8.0 * 12000.0 / 1920.0;
 }

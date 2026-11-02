@@ -2110,6 +2110,7 @@ private:
     QTableWidget *m_tableFt8QsoHistory = nullptr;
     QPushButton *m_btnFt8ClearRx = nullptr;
     QCheckBox *m_chkFt8AutoScroll = nullptr;
+    QSpinBox *m_spinFtWaterfallCq = nullptr;   // CQ calls on the waterfall: seconds, 0 = off
     QTableWidget *m_tableFt8TxMessages = nullptr;
     QLineEdit *m_editFt8MyCall = nullptr;
     QLineEdit *m_editFt8MyGrid = nullptr;
@@ -2325,10 +2326,12 @@ private:
 
     struct Ft8WaterfallCallout
     {
-        int frequencyHz = 0;
+        int frequencyHz = 0;   // base tone, as in the decode line
+        QString call;          // one callout per station: a new one replaces it
         QString label;
         QColor color;
-        QDateTime expiresUtc;
+        QDateTime heardUtc;
+        int durationMs = 0;
         bool directReplyToMe = false;
         bool blacklisted = false;
     };

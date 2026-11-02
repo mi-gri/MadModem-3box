@@ -195,6 +195,7 @@ private:
     QComboBox *m_comboDecodeTableFontFamily = nullptr;
     QSpinBox *m_spinDecodeTableFontSize = nullptr;
     QSpinBox *m_spinDecodeTableRowHeight = nullptr;
+    QSpinBox *m_spinFtWaterfallRowMs = nullptr;
     QPlainTextEdit *m_editFtBlacklist = nullptr;
     QPlainTextEdit *m_editFtWatchList = nullptr;
     QComboBox *m_cmbAutoQsoDuplicatePolicy = nullptr;
