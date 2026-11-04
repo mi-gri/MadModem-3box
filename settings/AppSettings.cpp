@@ -602,16 +602,32 @@ void AppSettings::load()
     Q_UNUSED(oldFtDecodeEngine);
     ft8DecodeEngine = "mshv";
 
-    ftHighlightMyCallBackground = safeColourName(settings.value("FT8/highlightMyCallBackground", ftHighlightMyCallBackground), "#FFEBEB");
-    ftHighlightMyCallForeground = safeColourName(settings.value("FT8/highlightMyCallForeground", ftHighlightMyCallForeground), "#DC0000");
-    ftHighlightCqBackground = safeColourName(settings.value("FT8/highlightCqBackground", ftHighlightCqBackground), "#E8FFE8");
-    ftHighlightCqForeground = safeColourName(settings.value("FT8/highlightCqForeground", ftHighlightCqForeground), "#145014");
+    // Scheme 2 = JTDX colours (text = kind of message, background = new
+    // DXCC/grid/call). Colours stored by the older scheme meant something
+    // else (CQ text was yellow on dark green), so they are not taken over.
+    const bool jtdxColourScheme = settings.value("FT8/highlightScheme", 1).toInt() >= 2;
+    const auto ftColour = [&settings, jtdxColourScheme](const char *key, const QString &fallback) {
+        return jtdxColourScheme ? safeColourName(settings.value(key, fallback), fallback) : fallback;
+    };
+    ftHighlightMyCallForeground = ftColour("FT8/highlightMyCallForeground", ftHighlightMyCallForeground);
+    ftHighlightCqForeground = ftColour("FT8/highlightCqForeground", ftHighlightCqForeground);
+    ftHighlightStandardForeground = ftColour("FT8/highlightStandardForeground", ftHighlightStandardForeground);
+    ftHighlightNewDxccBackground = ftColour("FT8/highlightNewDxccBackground", ftHighlightNewDxccBackground);
+    ftHighlightNewDxccBandBackground = ftColour("FT8/highlightNewDxccBandBackground", ftHighlightNewDxccBandBackground);
+    ftHighlightNewGridBackground = ftColour("FT8/highlightNewGridBackground", ftHighlightNewGridBackground);
+    ftHighlightNewGridBandBackground = ftColour("FT8/highlightNewGridBandBackground", ftHighlightNewGridBandBackground);
+    ftHighlightNewCallBackground = ftColour("FT8/highlightNewCallBackground", ftHighlightNewCallBackground);
+    ftHighlightNewCallBandBackground = ftColour("FT8/highlightNewCallBandBackground", ftHighlightNewCallBandBackground);
+    ftHighlightTxBackground = ftColour("FT8/highlightTxBackground", ftHighlightTxBackground);
+    ftHighlightTxForeground = ftColour("FT8/highlightTxForeground", ftHighlightTxForeground);
+    ftHighlightNewDxcc = settings.value("FT8/highlightNewDxcc", ftHighlightNewDxcc).toBool();
+    ftHighlightNewGrid = settings.value("FT8/highlightNewGrid", ftHighlightNewGrid).toBool();
+    ftHighlightNewCall = settings.value("FT8/highlightNewCall", ftHighlightNewCall).toBool();
     ftWaterfallCqSeconds = qBound(0, settings.value("FT8/waterfallCqSeconds", ftWaterfallCqSeconds).toInt(), 600);
     ftWaterfallRowMs = qBound(50, settings.value("FT8/waterfallRowMs", ftWaterfallRowMs).toInt(), 1000);
-    ftHighlightWorkedBackground = safeColourName(settings.value("FT8/highlightWorkedBackground", ftHighlightWorkedBackground), "#F0F0F0");
-    ftHighlightWorkedForeground = safeColourName(settings.value("FT8/highlightWorkedForeground", ftHighlightWorkedForeground), "#777777");
-    ftHighlightTxBackground = safeColourName(settings.value("FT8/highlightTxBackground", ftHighlightTxBackground), "#FFF75F");
-    ftHighlightTxForeground = safeColourName(settings.value("FT8/highlightTxForeground", ftHighlightTxForeground), "#000000");
+    ftDecodeFilterCqEnd = settings.value("FT8/decodeFilterCqEnd", ftDecodeFilterCqEnd).toBool();
+    ftDecodeFilterWorked = settings.value("FT8/decodeFilterWorked", ftDecodeFilterWorked).toBool();
+    ftDecodeFilterWorkedDays = qBound(0, settings.value("FT8/decodeFilterWorkedDays", ftDecodeFilterWorkedDays).toInt(), 3650);
     ftHighlightNewCountryEnabled = settings.value("FT8/highlightNewCountryEnabled", ftHighlightNewCountryEnabled).toBool();
     ftWatchListIconEnabled = settings.value("FT8/watchListIconEnabled", ftWatchListIconEnabled).toBool();
     ftBlacklistCalls = settings.value("FT8/blacklistCalls", ftBlacklistCalls).toStringList();
@@ -974,16 +990,26 @@ bool AppSettings::save() const
     settings.setValue("FT8/dspPlusDecode", false);
     settings.setValue("FT8/cqRepeatTimeoutMinutes", ft8CqRepeatTimeoutMinutes);
     settings.setValue("FT8/decodeEngine", ft8DecodeEngine);
-    settings.setValue("FT8/highlightMyCallBackground", ftHighlightMyCallBackground);
+    settings.setValue("FT8/highlightScheme", 2);
     settings.setValue("FT8/highlightMyCallForeground", ftHighlightMyCallForeground);
-    settings.setValue("FT8/highlightCqBackground", ftHighlightCqBackground);
     settings.setValue("FT8/highlightCqForeground", ftHighlightCqForeground);
-    settings.setValue("FT8/waterfallCqSeconds", ftWaterfallCqSeconds);
-    settings.setValue("FT8/waterfallRowMs", ftWaterfallRowMs);
-    settings.setValue("FT8/highlightWorkedBackground", ftHighlightWorkedBackground);
-    settings.setValue("FT8/highlightWorkedForeground", ftHighlightWorkedForeground);
+    settings.setValue("FT8/highlightStandardForeground", ftHighlightStandardForeground);
+    settings.setValue("FT8/highlightNewDxccBackground", ftHighlightNewDxccBackground);
+    settings.setValue("FT8/highlightNewDxccBandBackground", ftHighlightNewDxccBandBackground);
+    settings.setValue("FT8/highlightNewGridBackground", ftHighlightNewGridBackground);
+    settings.setValue("FT8/highlightNewGridBandBackground", ftHighlightNewGridBandBackground);
+    settings.setValue("FT8/highlightNewCallBackground", ftHighlightNewCallBackground);
+    settings.setValue("FT8/highlightNewCallBandBackground", ftHighlightNewCallBandBackground);
     settings.setValue("FT8/highlightTxBackground", ftHighlightTxBackground);
     settings.setValue("FT8/highlightTxForeground", ftHighlightTxForeground);
+    settings.setValue("FT8/highlightNewDxcc", ftHighlightNewDxcc);
+    settings.setValue("FT8/highlightNewGrid", ftHighlightNewGrid);
+    settings.setValue("FT8/highlightNewCall", ftHighlightNewCall);
+    settings.setValue("FT8/waterfallCqSeconds", ftWaterfallCqSeconds);
+    settings.setValue("FT8/waterfallRowMs", ftWaterfallRowMs);
+    settings.setValue("FT8/decodeFilterCqEnd", ftDecodeFilterCqEnd);
+    settings.setValue("FT8/decodeFilterWorked", ftDecodeFilterWorked);
+    settings.setValue("FT8/decodeFilterWorkedDays", ftDecodeFilterWorkedDays);
     settings.setValue("FT8/highlightNewCountryEnabled", ftHighlightNewCountryEnabled);
     settings.setValue("FT8/watchListIconEnabled", ftWatchListIconEnabled);
     settings.setValue("FT8/blacklistCalls", ftBlacklistCalls);

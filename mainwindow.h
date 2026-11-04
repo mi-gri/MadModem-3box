@@ -108,7 +108,7 @@ QT_END_NAMESPACE
 
 
 /**
- * @brief One decoded CQ waiting for Evil Auto QSO priority selection.
+ * @brief One decoded CQ waiting for Auto QSO priority selection.
  *
  * Auto QSO must not answer the first CQ that happens to be emitted by the
  * decoder.  A full FT pass can contain many simultaneous CQs; MM buffers them
@@ -786,6 +786,11 @@ private slots:
     // active, but the existing linear sequencer remains the sole owner of TX.
     void considerFt8CallerForQueue(const Ft8RxDecoder::Decode &decode, bool blacklistedDecode);
     bool activateNextFt8QueuedCaller();
+    // A given-up QSO whose RR73/73 arrives later (both reports were exchanged):
+    // log it and send the 73 after the current QSO.
+    void handleFt8LateFinal(const Ft8RxDecoder::Decode &decode, const QString &senderCall);
+    bool activateNextFt8LateFinal();
+    static bool parsed73IsReplyWorthy(const QString &message);
     void removeFt8QueuedCaller(const QString &call);
     void clearFt8CallerQueue(const QString &reason = QString());
     void updateFt8SessionQueueUi();
@@ -793,6 +798,13 @@ private slots:
     void refreshFt8CallerQueueUi();
     bool addFtDecodeToCqWorkList(QTableWidgetItem *item, bool cqOnly);
     void addSelectedFtCqsToWorkList();
+    bool ft8DecodeRowPassesFilter(int row) const;   // "Only CQ/RR73/73", worked stations
+    void styleFt8DecodeRow(int row, QVariantList *missingQueries, QSet<QString> *queuedKeys);
+    void updateFt8DecodeFilterButton();
+    void scheduleFt8PendingFilterRecheck();
+    bool keepWaterfallHistory(const QString &modeName) const;
+    void applyFt8DecodeFilterToRow(int row);
+    void applyFt8DecodeFilter();
     void showFtCqWorkList();
     void refreshFtCqWorkListUi();
     void processFtCqWorkList();
@@ -803,15 +815,11 @@ private slots:
     bool tryStartFt8FullAutoQso(const Ft8RxDecoder::Decode &decode, const QVariantMap &logbookStatus);
 
 
-    /**
-     * @brief Gates WSJT-Z-style unattended helpers behind the explicit Evil Mode unlock.
-     */
-    void handleFt8EvilModeToggled(bool enabled);
 
     /**
-     * @brief Shows/hides Auto CQ and Auto QSO controls according to Evil Mode state.
+     * @brief Shows/hides Auto CQ and Auto QSO controls (Auto mode is always on).
      */
-    void updateFt8EvilModeVisibility();
+    void updateFt8AutoModeVisibility();
 
     /**
      * @brief Starts/stops WSJT-Z-style Auto CQ when the gated checkbox is toggled.
@@ -883,6 +891,7 @@ private slots:
      * @brief Saves the current FT8 QSO to the ADIF logbook without modal prompts.
      */
     void autoLogFt8Qso(const QString &reason);
+    void autoLogFt8QsoFor(const FtQsoSession &session, const QString &reason);
 
     /**
      * @brief Selects one standard FT8 TX row and returns its generated text.
@@ -987,7 +996,7 @@ private:
 
 
     /**
-     * @brief Returns true when Evil Auto QSO is unlocked, idle and allowed to answer a CQ.
+     * @brief Returns true when Auto QSO is on, idle and allowed to answer a CQ.
      */
     bool canStartFt8FullAutoQsoNow() const;
     bool canCollectFt8FullAutoCqs() const;
@@ -2110,7 +2119,10 @@ private:
     QTableWidget *m_tableFt8QsoHistory = nullptr;
     QPushButton *m_btnFt8ClearRx = nullptr;
     QCheckBox *m_chkFt8AutoScroll = nullptr;
-    QSpinBox *m_spinFtWaterfallCq = nullptr;   // CQ calls on the waterfall: seconds, 0 = off
+    QToolButton *m_btnFt8DecodeFilter = nullptr;   // decode filter menu
+    QAction *m_actFt8FilterCqEnd = nullptr;        // only CQ/RR73/73
+    QAction *m_actFt8FilterWorked = nullptr;       // hide worked stations
+    QSpinBox *m_spinFt8FilterWorkedDays = nullptr; // ... within N days, 0 = all
     QTableWidget *m_tableFt8TxMessages = nullptr;
     QLineEdit *m_editFt8MyCall = nullptr;
     QLineEdit *m_editFt8MyGrid = nullptr;
@@ -2140,8 +2152,7 @@ private:
     QCheckBox *m_chkFt8FullAutoQso = nullptr;
     QCheckBox *m_chkFt8CallerQueue = nullptr;
     QLabel *m_lblFt8SessionQueue = nullptr;
-    QCheckBox *m_chkFt8EvilMode = nullptr;
-    bool m_ft8EvilModeUnlocked = false;
+    bool m_ft8AutoModeEnabled = true;   // always on; kept as the automation gate
     QString m_ftAutomationTraceId;
     QHash<QString, QPair<QByteArray, qint64>> m_ftAutomationLastTrace;
     bool m_ft8OperatorStopLatched = false;
@@ -2167,6 +2178,19 @@ private:
         QDateTime lastSeenUtc;
     };
     QVector<Ft8QueuedCaller> m_ft8CallerQueue;
+    struct Ft8RReportQso
+    {
+        FtQsoSession session;      // state when our R-report went out
+        QDateTime rReportSentUtc;
+    };
+    QHash<QString, Ft8RReportQso> m_ft8RReportQsos;   // by normalized call
+    struct Ft8LateFinal
+    {
+        FtQsoSession session;
+        Ft8RxDecoder::Decode decode;   // the late RR73
+        QDateTime receivedUtc;
+    };
+    QVector<Ft8LateFinal> m_ft8LateFinals;
     QPushButton *m_btnFt8CallerList = nullptr;
     QDialog *m_ft8CallerDialog = nullptr;
     QTableWidget *m_ft8CallerTable = nullptr;
@@ -2241,6 +2265,8 @@ private:
     QVector<double> m_ft8RecentDtSeconds;
 
     QString m_lastFt8RxTableUtc;
+    bool m_ft8PendingFilterRecheckQueued = false;
+    QString m_waterfallHistoryMode;   // mode whose waterfall history is on screen
     bool m_ft8NtpSynced = false;
     double m_ft8NtpOffsetMs = 0.0;
     double m_ft8NtpRttMs = 0.0;

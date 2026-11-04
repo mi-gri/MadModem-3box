@@ -21,7 +21,7 @@ class QTimeEdit;
  * @brief One daily UTC QSY scheduler entry.
  *
  * The scheduler intentionally stores only a safe QSY request: mode, band and
- * rig frequency. It never stores TX/QSO automation state. Evil Auto CQ/Auto
+ * rig frequency. It never stores TX/QSO automation state. Auto CQ/Auto
  * QSO can remain enabled; MainWindow decides when a pending QSY is safe to
  * apply after TX/QSO completion.
  */

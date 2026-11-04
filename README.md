@@ -10,7 +10,7 @@ CAT/PTT, antenna rotator control and an ADIF logbook in one Qt desktop applicati
 ## Funzioni / Features
 
 - FT8, FT4, MSK144, Q65, CW, RTTY, BPSK/QPSK, MFSK, Feld Hell, SSTV e WEFAX.
-- FT8/FT4 QSO sequencer, CQ queues, Evil Auto QSO and Doppler correction.
+- FT8/FT4 QSO sequencer, CQ queues, Auto QSO and Doppler correction.
 - CW native/neural receivers, CW/RTTY skimmers, audio CW and serial keying.
 - Hamlib CAT/PTT, rotator tracking, station/DX information, QSO maps and UTC scheduler.
 - ADIF logging, contest tools, macro messages, WAV recording and offline analysis.
@@ -39,7 +39,7 @@ Installation details and user-data paths: [Installation](docs/INSTALLATION.md).
 4. For FT8/FT4, synchronize UTC. Check the selected correspondent and TX message.
 5. Open the built-in Help for mode-specific instructions. Stop cancels TX and automation.
 
-The title shows both version and build. Evil automation decisions are recorded in
+The title shows both version and build. Auto QSO decisions are recorded in
 Runtime log; complete compressed session logging is available in Settings → Diagnostics.
 See [Troubleshooting](docs/TROUBLESHOOTING.md).
 

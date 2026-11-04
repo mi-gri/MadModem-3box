@@ -939,13 +939,6 @@ FT_OPERATOR_TRANSLATIONS: dict[str, dict[str, str]] = {
         "no": "Én FT-bane: grunnleggende dekoding, restsignalgjenfinning med gyldig CRC og AP/OSD-forsøk på lovende kandidater.",
         "cs": "Jediná cesta FT: základní dekódování, obnova zbytků s platným CRC a pokusy AP/OSD u nadějných kandidátů.",
     },
-    "ft8_evil_mode_tooltip": {
-        "it": "Mostra Auto CQ e Auto QSO solo dopo una conferma esplicita; lo sblocco vale per la sessione corrente.",
-        "fr": "Affiche Auto CQ et Auto QSO uniquement après confirmation explicite ; le déverrouillage vaut pour la session en cours.",
-        "de": "Zeigt Auto CQ und Auto QSO erst nach ausdrücklicher Bestätigung; die Freigabe gilt nur für die aktuelle Sitzung.",
-        "no": "Viser Auto CQ og Auto QSO først etter uttrykkelig bekreftelse; opplåsingen gjelder bare denne økten.",
-        "cs": "Zobrazí Auto CQ a Auto QSO až po výslovném potvrzení; odemčení platí jen pro aktuální relaci.",
-    },
     "ft_tx_arrow_tooltip": {
         "it": "La freccia indica il messaggio standard selezionato o programmato dal sequencer FT.",
         "fr": "La flèche indique le message standard sélectionné ou programmé par le séquenceur FT.",

@@ -2,6 +2,8 @@
 #include "runtime/SessionDiagnostics.h"
 #include "modems/ft8/FtDiagnostics.h"
 #include "widgets/CqSpots.h"
+#include "modems/ft8/FtDecodeFilter.h"
+#include "modems/ft8/FtDecodeColours.h"
 #include "widgets/DecodeTableClipboard.h"
 #include "callsign/QrzLookupPanel.h"
 #include "updates/UpdateController.h"
@@ -9,6 +11,7 @@
 #include "runtime/WeakSignalTxPreparer.h"
 #include "logbook/CqWwRtty.h"
 #include "mainwindow.h"
+#include "audio/AudioDeviceCache.h"
 #include "runtime/SstvImageArchive.h"
 #include "audio/RadioBandPower.h"
 #include "MadModemBuildInfo.h"
@@ -58,6 +61,7 @@
 #include <QMetaType>
 #include <QTabWidget>
 #include <QTabBar>
+#include <QTableView>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QHeaderView>
@@ -137,6 +141,7 @@
 #include <QSizePolicy>
 #include <QSlider>
 #include <QSpinBox>
+#include <QWidgetAction>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextCharFormat>
@@ -411,6 +416,14 @@ constexpr int kFtRowRedOutlineRole = Qt::UserRole + 427;
 constexpr int kFtOriginalMessageRole = Qt::UserRole + 428;
 constexpr int kFtPresentationOnlyRole = Qt::UserRole + 429;
 constexpr int kFtDecodeRole = Qt::UserRole + 430;
+constexpr int kFtWorkedRole = Qt::UserRole + 431;      // station already in the log
+constexpr int kFtLastQsoUtcRole = Qt::UserRole + 432;  // its latest QSO (UTC)
+constexpr int kFtSlotSeparatorRole = Qt::UserRole + 433;  // "──── HHMMSS ────" row
+constexpr int kFtLogPendingSinceRole = Qt::UserRole + 434; // logbook status asked at (ms since epoch), 0 = known
+// With the "worked" filter on, a new row stays hidden while its logbook status
+// is pending, so it does not flash up and vanish again; after this time it is
+// shown anyway (logbook slow or unavailable).
+constexpr qint64 kFtLogPendingHideMs = 2500;
 
 class FtDecodeRowDelegate final : public QStyledItemDelegate
 {
@@ -420,6 +433,16 @@ public:
     void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override
     {
         QStyledItemDelegate::paint(painter, option, index);
+        if (startsNewTimeGroup(index)) {
+            // A clear line between the decode periods (the grid line alone is too faint).
+            painter->save();
+            QColor lineColour = option.palette.color(QPalette::Text);
+            lineColour.setAlpha(170);
+            painter->setPen(QPen(lineColour, 2));
+            const int y = option.rect.top() + 1;
+            painter->drawLine(option.rect.left(), y, option.rect.right(), y);
+            painter->restore();
+        }
         if (!index.data(kFtRowRedOutlineRole).toBool()) {
             return;
         }
@@ -440,6 +463,40 @@ public:
             }
         }
         painter->restore();
+    }
+
+private:
+    static bool isSeparator(const QAbstractItemModel *model, int row)
+    {
+        return model->index(row, 0).data(kFtSlotSeparatorRole).toBool();
+    }
+
+    // True for the first visible row of a new UTC period: a separator row, or
+    // a row whose time differs from the visible row above it (rows hidden by
+    // the decode filter are skipped).
+    bool startsNewTimeGroup(const QModelIndex &index) const
+    {
+        const QAbstractItemModel *model = index.model();
+        if (model == nullptr || index.row() == 0) {
+            return false;
+        }
+        const auto *view = qobject_cast<const QTableView *>(parent());
+        int previous = index.row() - 1;
+        for (int guard = 0; previous >= 0 && view != nullptr && view->isRowHidden(previous) && guard < 2000; ++guard) {
+            --previous;
+        }
+        if (previous < 0) {
+            return false;
+        }
+        if (isSeparator(model, index.row())) {
+            return true;
+        }
+        if (isSeparator(model, previous)) {
+            return false;   // the separator above already draws the line
+        }
+        const QString time = model->index(index.row(), 0).data(Qt::DisplayRole).toString();
+        const QString previousTime = model->index(previous, 0).data(Qt::DisplayRole).toString();
+        return !time.isEmpty() && !previousTime.isEmpty() && time != previousTime;
     }
 };
 
@@ -1582,7 +1639,7 @@ MainWindow::MainWindow(QWidget *parent)
         last=state;
     });diagnosticHealthTimer->start(1000);
     appendLog("MM started.");
-    appendLog(QStringLiteral("MadModem %1 | build %2 | source %3 | commit %4").arg(QStringLiteral(MADMODEM_VERSION_STRING), QStringLiteral(MADMODEM_BUILD_NUMBER), QStringLiteral(MADMODEM_SOURCE_REVISION), QStringLiteral(MADMODEM_BUILD_COMMIT)));
+    appendLog(QStringLiteral("MadModem %1 | build %2 | source %3 | commit %4").arg(QStringLiteral(MADMODEM_VERSION_STRING), QString::fromLatin1(MadModemBuild::number()), QStringLiteral(MADMODEM_SOURCE_REVISION), QStringLiteral(MADMODEM_BUILD_COMMIT)));
     appendLog("Settings file: " + AppSettings::settingsFilePath());
     appendLog("Receiver is ready. Use Status → ▶ RX to start live decoding, or analyze a WAV test file from the mode panel.");
     updateMainStateButton();
@@ -4037,93 +4094,17 @@ void MainWindow::refreshFt8DecodeWorkedHighlights()
 {
     if (m_tableFt8Rx == nullptr) return;
 
-    const QString myCall = stationCallsign();
-    const QString band = (m_cmbFt8Band != nullptr) ? m_cmbFt8Band->currentText().trimmed().toLower()
-                                                   : m_settings.ft8Band.trimmed().toLower();
-    const QString mode = currentAdifMode().trimmed().toUpper();
-    const int recentHours = qBound(1, m_settings.ftAutoQsoRecentHours, 168);
     QVariantList missingQueries;
     QSet<QString> queuedKeys;
-
+    m_tableFt8Rx->setUpdatesEnabled(false);
     for (int row = 0; row < m_tableFt8Rx->rowCount(); ++row) {
-        QTableWidgetItem *messageItem = m_tableFt8Rx->item(row, 4);
-        if (messageItem == nullptr) continue;
-        const QString storedMessage = messageItem->data(kFtOriginalMessageRole).toString().trimmed().toUpper();
-        const QString visibleMessage = messageItem->text().trimmed().toUpper();
-        const ParsedFt8Message parsed = parseFt8MessageText(storedMessage.isEmpty() ? visibleMessage : storedMessage, myCall);
-        const QStringList candidateCalls = ft8HighlightCandidateCallsigns(parsed, myCall);
-
-        QString workedCall;
-        QString neededCall;
-        bool allKnown = !candidateCalls.isEmpty();
-        QVariantMap primaryStatus;
-        QString primaryCountry;
-
-        for (const QString &rawCall : candidateCalls) {
-            const QString call = AdifLogbook::normalizeCallsign(rawCall);
-            if (call.isEmpty()) continue;
-            QString grid;
-            if (FtDecodedText::callMatches(call, parsed.senderCall) || parsed.cq) grid = parsed.grid;
-            if (!FtDecodedText::isGrid(grid.left(4)) || FtDecodedText::isAckLikeGridTrap(grid.left(4))) {
-                grid = m_ftSession.knownGridFor(call);
-            }
-            const CtyCountryFile::LookupResult cty = CtyCountryFile::instance().lookupCallsign(call);
-            const QVariantMap query = makeFtLogbookQuery(call,
-                                                         band,
-                                                         mode,
-                                                         cty.valid ? cty.entity.dxcc : QString(),
-                                                         grid,
-                                                         recentHours,
-                                                         0);
-            const QVariantMap status = cachedFtLogbookStatus(query);
-            if (status.isEmpty()) {
-                allKnown = false;
-                const QString key = query.value(QStringLiteral("cacheKey")).toString();
-                if (!key.isEmpty() && !queuedKeys.contains(key)) {
-                    queuedKeys.insert(key);
-                    missingQueries.push_back(query);
-                }
-                continue;
-            }
-            if (primaryStatus.isEmpty()) {
-                primaryStatus = status;
-                if (cty.valid) primaryCountry = cty.entity.name;
-            }
-            if (status.value(QStringLiteral("worked")).toBool()) {
-                if (workedCall.isEmpty()) workedCall = call;
-            } else if (neededCall.isEmpty()) {
-                neededCall = call;
-            }
-        }
-
-        const bool worked = allKnown && !workedCall.isEmpty() && neededCall.isEmpty();
-        const bool needed = allKnown && !neededCall.isEmpty();
-        const bool newCountry = allKnown && m_settings.ftHighlightNewCountryEnabled &&
-                                !primaryStatus.isEmpty() &&
-                                !primaryStatus.value(QStringLiteral("countryWorkedAny")).toBool() &&
-                                !primaryCountry.isEmpty();
-
-        for (int col = 0; col < m_tableFt8Rx->columnCount(); ++col) {
-            QTableWidgetItem *it = m_tableFt8Rx->item(row, col);
-            if (it == nullptr) continue;
-            QFont f = it->font();
-            f.setStrikeOut(worked && m_settings.logbookStrikeWorkedCalls);
-            it->setFont(f);
-            it->setData(kFtRowRedOutlineRole, newCountry);
-            if (newCountry) {
-                it->setToolTip(uiText("ft_new_dxcc_country_tooltip", "New DXCC country not present in logbook: %1").arg(primaryCountry));
-            } else if (worked) {
-                it->setToolTip(MadModemI18n::text(QStringLiteral("Worked before: %1 is already in the ADIF logbook")).arg(workedCall));
-            } else if (needed) {
-                it->setToolTip(MadModemI18n::text(QStringLiteral("Needed station: %1 is not in the ADIF logbook yet. You can call it after the current QSO/73, even if this line is not CQ.")).arg(neededCall));
-            } else if (allKnown) {
-                it->setToolTip(QString());
-            }
-        }
+        styleFt8DecodeRow(row, &missingQueries, &queuedKeys);
     }
-
+    m_tableFt8Rx->setUpdatesEnabled(true);
     queueFtLogbookQueries(missingQueries);
-    if (m_tableFt8Rx->viewport() != nullptr) m_tableFt8Rx->viewport()->update();
+    if (m_chkFt8AutoScroll == nullptr || m_chkFt8AutoScroll->isChecked()) {
+        m_tableFt8Rx->scrollToBottom();
+    }
 }
 
 void MainWindow::refreshLogbookHighlights(bool recentOnly)
@@ -8685,26 +8666,59 @@ void MainWindow::setupFt8Page()
     m_chkFt8AutoScroll->setToolTip(uiText("ft_auto_scroll_tooltip", "Keep the decode table scrolled to the newest line while receiving."));
     rxToolsLayout->addWidget(m_btnFt8ClearRx);
     rxToolsLayout->addWidget(m_chkFt8AutoScroll);
-    // CQ calls on the waterfall: seconds shown, 0 = off (as in JTDX 3box)
-    m_spinFtWaterfallCq = new QSpinBox(rxGroup);
-    m_spinFtWaterfallCq->setObjectName(QStringLiteral("spinFtWaterfallCq"));
-    m_spinFtWaterfallCq->setRange(0, 600);
-    m_spinFtWaterfallCq->setSingleStep(5);
-    m_spinFtWaterfallCq->setPrefix(uiText("ft_waterfall_cq_prefix", "CQ calls").trimmed() + QLatin1Char(' '));
-    m_spinFtWaterfallCq->setSuffix(QStringLiteral(" s"));
-    m_spinFtWaterfallCq->setSpecialValueText(uiText("ft_waterfall_cq_off", "CQ calls off"));
-    m_spinFtWaterfallCq->setToolTip(uiText("ft_waterfall_cq_tooltip", "Shows the callsigns of stations calling CQ at the bottom of the waterfall, over their signal, for this many seconds; they fade out towards the end. 0 switches it off."));
-    m_spinFtWaterfallCq->setValue(qBound(0, m_settings.ftWaterfallCqSeconds, 600));
-    connect(m_spinFtWaterfallCq, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int seconds) {
-        m_settings.ftWaterfallCqSeconds = seconds;
-        // A changed time applies to the calls already shown, as in JTDX.
-        for (Ft8WaterfallCallout &callout : m_ft8WaterfallCallouts) {
-            callout.durationMs = (callout.directReplyToMe ? qMax(45, seconds) : seconds) * 1000;
-        }
-        updateFt8WaterfallOverlays();
+    // Decode filters (as in JTDX): only CQ calls and QSO ends (RR73/73), and
+    // stations already worked - all of them, or only those worked within the
+    // last N days. Lines to me and my own TX lines always stay visible.
+    m_btnFt8DecodeFilter = new QToolButton(rxGroup);
+    m_btnFt8DecodeFilter->setObjectName(QStringLiteral("btnFt8DecodeFilter"));
+    m_btnFt8DecodeFilter->setPopupMode(QToolButton::InstantPopup);
+    m_btnFt8DecodeFilter->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_btnFt8DecodeFilter->setToolTip(uiText("ft_filter_tooltip", "Filters for the decode list. Lines to your call and your own transmissions always stay visible."));
+    QMenu *filterMenu = new QMenu(m_btnFt8DecodeFilter);
+    m_actFt8FilterCqEnd = filterMenu->addAction(uiText("ft_filter_cq_end", "Only CQ/RR73/73"));
+    m_actFt8FilterCqEnd->setCheckable(true);
+    m_actFt8FilterCqEnd->setChecked(m_settings.ftDecodeFilterCqEnd);
+    m_actFt8FilterCqEnd->setToolTip(uiText("ft_filter_cq_end_tooltip", "Shows only decodes that call CQ or end a QSO with RR73 or 73. Lines to your call and your own transmissions stay visible."));
+    m_actFt8FilterWorked = filterMenu->addAction(uiText("ft_filter_worked", "Hide worked stations"));
+    m_actFt8FilterWorked->setCheckable(true);
+    m_actFt8FilterWorked->setChecked(m_settings.ftDecodeFilterWorked);
+    m_actFt8FilterWorked->setToolTip(uiText("ft_filter_worked_tooltip", "Hides stations that are already in the logbook (any band and mode)."));
+    {
+        QWidget *daysRow = new QWidget(filterMenu);
+        QHBoxLayout *daysLayout = new QHBoxLayout(daysRow);
+        daysLayout->setContentsMargins(24, 2, 8, 4);
+        daysLayout->setSpacing(6);
+        QLabel *daysLabel = new QLabel(uiText("ft_filter_worked_days", "Last QSO within"), daysRow);
+        m_spinFt8FilterWorkedDays = new QSpinBox(daysRow);
+        m_spinFt8FilterWorkedDays->setObjectName(QStringLiteral("spinFt8FilterWorkedDays"));
+        m_spinFt8FilterWorkedDays->setRange(0, 3650);
+        m_spinFt8FilterWorkedDays->setSuffix(QStringLiteral(" ") + uiText("ft_filter_days_suffix", "days"));
+        m_spinFt8FilterWorkedDays->setSpecialValueText(uiText("ft_filter_worked_all", "all worked"));
+        m_spinFt8FilterWorkedDays->setValue(qBound(0, m_settings.ftDecodeFilterWorkedDays, 3650));
+        const QString daysTip = uiText("ft_filter_worked_days_tooltip", "Hide a worked station only if its last QSO is at most this many days ago; older contacts are shown again. 0 hides every worked station.");
+        daysLabel->setToolTip(daysTip);
+        m_spinFt8FilterWorkedDays->setToolTip(daysTip);
+        daysLayout->addWidget(daysLabel);
+        daysLayout->addWidget(m_spinFt8FilterWorkedDays, 1);
+        QWidgetAction *daysAction = new QWidgetAction(filterMenu);
+        daysAction->setDefaultWidget(daysRow);
+        filterMenu->addAction(daysAction);
+    }
+    filterMenu->setToolTipsVisible(true);
+    m_btnFt8DecodeFilter->setMenu(filterMenu);
+    const auto filterChanged = [this]() {
+        m_settings.ftDecodeFilterCqEnd = m_actFt8FilterCqEnd->isChecked();
+        m_settings.ftDecodeFilterWorked = m_actFt8FilterWorked->isChecked();
+        m_settings.ftDecodeFilterWorkedDays = m_spinFt8FilterWorkedDays->value();
+        updateFt8DecodeFilterButton();
+        applyFt8DecodeFilter();
         m_settings.save();
-    });
-    rxToolsLayout->addWidget(m_spinFtWaterfallCq);
+    };
+    connect(m_actFt8FilterCqEnd, &QAction::toggled, this, filterChanged);
+    connect(m_actFt8FilterWorked, &QAction::toggled, this, filterChanged);
+    connect(m_spinFt8FilterWorkedDays, QOverload<int>::of(&QSpinBox::valueChanged), this, filterChanged);
+    updateFt8DecodeFilterButton();
+    rxToolsLayout->addWidget(m_btnFt8DecodeFilter);
     rxToolsLayout->addStretch(1);
     rxLayout->addLayout(rxToolsLayout);
 
@@ -8846,7 +8860,7 @@ void MainWindow::setupFt8Page()
     m_lblFt8SessionQueue->setToolTip(uiText("ft8_session_stats_tooltip",
         "Counts completed FT4/FT8 QSOs since MadModem was started and shows callers waiting in the passive FIFO."));
     m_chkFt8FullAutoQso = new QCheckBox(uiText("ft8_auto_qso", "Auto QSO"), controlGroup);
-    m_chkFt8FullAutoQso->setToolTip(uiText("ft8_auto_qso_tooltip", "WSJT-Z-style gated automation. Decoded CQs are buffered and prioritized by new country, new grid square, new band, new mode, distance and SNR before answering. Visible only after Evil Mode is explicitly unlocked."));
+    m_chkFt8FullAutoQso->setToolTip(uiText("ft8_auto_qso_tooltip", "WSJT-Z-style gated automation. Decoded CQs are buffered and prioritized by new country, new grid square, new band, new mode, distance and SNR before answering."));
     m_chkFt8FullAutoQso->setStyleSheet(QStringLiteral("QCheckBox { font-weight: 500; }"));
     MadModemUi::setSemanticRole(m_chkFt8FullAutoQso, QStringLiteral("accent"));
     m_chkFt8HoldTxFreq = new QCheckBox(uiText("hold_tx_frequency", "Hold TX frequency"), controlGroup);
@@ -8921,7 +8935,7 @@ void MainWindow::setupFt8Page()
     m_ftCqWorkListTimer.start();
     refreshFtCqWorkListUi();
     updateFt8SessionQueueUi();
-    updateFt8EvilModeVisibility();
+    updateFt8AutoModeVisibility();
 
     // Six aligned columns; the live state belongs to the side Mode page.
     for (int c = 0; c < 6; ++c) controlGrid->setColumnStretch(c, 1);
@@ -9024,10 +9038,6 @@ void MainWindow::setupFt8Page()
     m_chkFt8DspPlusDecode->setChecked(false);
     m_chkFt8DspPlusDecode->hide();
     m_btnFt8AnalyzeWav = nullptr;
-    m_chkFt8EvilMode = new QCheckBox(uiText("ft8_evil_mode", "Evil mode"), settingsGroup);
-    m_chkFt8EvilMode->setToolTip(uiText("ft8_evil_mode_tooltip", "Shows WSJT-Z-style Auto CQ / Auto QSO controls only after an explicit typed confirmation. This unlock is deliberately session-only."));
-    m_chkFt8EvilMode->setStyleSheet(QStringLiteral("QCheckBox { font-weight: 500; }"));
-    MadModemUi::setSemanticRole(m_chkFt8EvilMode, QStringLiteral("accent"));
     const QList<QSpinBox *> ft8FrequencySpins = {m_spinFt8RxFreq, m_spinFt8TxFreq};
     for (QSpinBox *spin : ft8FrequencySpins) {
         spin->setRange(100, 3000);
@@ -9041,7 +9051,6 @@ void MainWindow::setupFt8Page()
     settingsGrid->addWidget(m_spinFt8RxFreq, 1, 1);
     settingsGrid->addWidget(new QLabel(uiText("tx_audio_marker", "TX audio marker"), settingsGroup), 2, 0);
     settingsGrid->addWidget(m_spinFt8TxFreq, 2, 1);
-    settingsGrid->addWidget(m_chkFt8EvilMode, 3, 0, 1, 2);
     settingsGrid->setColumnStretch(1, 1);
 
     QGroupBox *txGroup = new QGroupBox(m_pageFt8Settings);
@@ -9154,7 +9163,6 @@ void MainWindow::loadFt8SettingsToUi()
     const QSignalBlocker blockAutoLog(m_chkFt8AutoLog);
     const QSignalBlocker blockCallerQueue(m_chkFt8CallerQueue);
     const QSignalBlocker blockFullAuto(m_chkFt8FullAutoQso);
-    const QSignalBlocker blockEvil(m_chkFt8EvilMode);
     const QSignalBlocker blockHoldTx(m_chkFt8HoldTxFreq);
     const QSignalBlocker blockTxStrategy(m_cmbFt8TxStrategy);
     const QSignalBlocker blockDeepDecode(m_chkFt8DeepDecode);
@@ -9185,11 +9193,8 @@ void MainWindow::loadFt8SettingsToUi()
     if (m_chkFt8FullAutoQso != nullptr) {
         m_chkFt8FullAutoQso->setChecked(false);
     }
-    m_ft8EvilModeUnlocked = false;
-    if (m_chkFt8EvilMode != nullptr) {
-        m_chkFt8EvilMode->setChecked(false);
-    }
-    updateFt8EvilModeVisibility();
+    m_ft8AutoModeEnabled = true;   // Auto mode is always on (Auto QSO control always available)
+    updateFt8AutoModeVisibility();
     m_chkFt8HoldTxFreq->setChecked(m_settings.ft8TxFrequencyStrategy == QStringLiteral("fixed") || m_settings.ft8HoldTxFrequency);
     const int strategyIndex = m_cmbFt8TxStrategy->findData(m_settings.ft8TxFrequencyStrategy);
     m_cmbFt8TxStrategy->setCurrentIndex(strategyIndex >= 0 ? strategyIndex : m_cmbFt8TxStrategy->findData(QStringLiteral("auto_free")));
@@ -11412,10 +11417,6 @@ void MainWindow::setupUiConnections()
         connect(m_chkFt8FullAutoQso, &QCheckBox::toggled,
                 this, &MainWindow::handleFt8FullAutoQsoToggled);
     }
-    if (m_chkFt8EvilMode != nullptr) {
-        connect(m_chkFt8EvilMode, &QCheckBox::toggled,
-                this, &MainWindow::handleFt8EvilModeToggled);
-    }
     if (m_chkFt8HoldTxFreq != nullptr) {
         connect(m_chkFt8HoldTxFreq, &QCheckBox::toggled,
                 this, [this](bool checked) {
@@ -12477,7 +12478,7 @@ void MainWindow::updateBandSchedulerTabForMode(const QString &modeName)
         m_btnBandSchedulerSettings->setToolTip(uiText("scheduler_settings_tooltip", "Open the daily UTC band/frequency plan. FT4/FT8 entries can use the standard frequencies for the selected band."));
     }
     if (m_lblBandSchedulerHint != nullptr) {
-        m_lblBandSchedulerHint->setText(uiText("scheduler_safe_qsy_hint", "Scheduled QSY waits for TX/QSO to finish. Evil Auto CQ and Auto QSO remain enabled."));
+        m_lblBandSchedulerHint->setText(uiText("scheduler_safe_qsy_hint", "Scheduled QSY waits for TX/QSO to finish. Auto CQ and Auto QSO remain enabled."));
     }
 }
 
@@ -13128,8 +13129,7 @@ void MainWindow::setReceiverRunning(bool running)
         if (m_chkFt8AutoSeq != nullptr) m_chkFt8AutoSeq->setEnabled(!m_offlineAnalysisActive);
         if (m_chkFt8CqRepeat != nullptr) m_chkFt8CqRepeat->setEnabled(!m_offlineAnalysisActive);
         if (m_chkFt8AutoLog != nullptr) m_chkFt8AutoLog->setEnabled(!m_offlineAnalysisActive);
-        if (m_chkFt8FullAutoQso != nullptr) m_chkFt8FullAutoQso->setEnabled(!m_offlineAnalysisActive && m_ft8EvilModeUnlocked);
-        if (m_chkFt8EvilMode != nullptr) m_chkFt8EvilMode->setEnabled(!m_offlineAnalysisActive);
+        if (m_chkFt8FullAutoQso != nullptr) m_chkFt8FullAutoQso->setEnabled(!m_offlineAnalysisActive && m_ft8AutoModeEnabled);
         if (m_spinFt8CqTimeoutMin != nullptr) m_spinFt8CqTimeoutMin->setEnabled(!m_offlineAnalysisActive);
         if (m_spinFt8NoResponseLimit != nullptr) m_spinFt8NoResponseLimit->setEnabled(!m_offlineAnalysisActive);
         if (m_btnFt8AnalyzeWav != nullptr) m_btnFt8AnalyzeWav->setEnabled(!m_txRunning && !m_offlineAnalysisActive);
@@ -16257,7 +16257,7 @@ void MainWindow::updateFt8SequencerUi()
     }
 
     QStringList details;
-    if (m_ft8EvilModeUnlocked && m_chkFt8FullAutoQso != nullptr && m_chkFt8FullAutoQso->isChecked() && !m_ftSession.qsoActive) {
+    if (m_ft8AutoModeEnabled && m_chkFt8FullAutoQso != nullptr && m_chkFt8FullAutoQso->isChecked() && !m_ftSession.qsoActive) {
         details << uiText("ft8_auto_qso_waiting", "Auto QSO: waiting for CQ");
     }
     if (m_ftSession.cqRepeatActive) {
@@ -17145,9 +17145,9 @@ void MainWindow::scheduleFt8SequencerMessage(const QString &message,
     updateFt8SequencerUi();
 }
 
-void MainWindow::updateFt8EvilModeVisibility()
+void MainWindow::updateFt8AutoModeVisibility()
 {
-    const bool visible = m_ft8EvilModeUnlocked;
+    const bool visible = m_ft8AutoModeEnabled;
 
     if (m_chkFt8CqRepeat != nullptr) {
         m_chkFt8CqRepeat->setVisible(true);
@@ -17177,51 +17177,6 @@ void MainWindow::updateFt8EvilModeVisibility()
     }
 
     updateFt8SequencerUi();
-}
-
-void MainWindow::handleFt8EvilModeToggled(bool enabled)
-{
-    if (m_chkFt8EvilMode == nullptr) {
-        return;
-    }
-
-    if (!enabled) {
-        m_ft8EvilModeUnlocked = false;
-        if (m_chkFt8FullAutoQso != nullptr && m_chkFt8FullAutoQso->isChecked()) {
-            m_chkFt8FullAutoQso->setChecked(false);
-        }
-        updateFt8EvilModeVisibility();
-        traceFtAutomation("control", "evil_disabled");
-        m_ftAutomationLastTrace.clear(); // Keep the session ID for an in-flight QSO/save.
-        appendLog("FT Evil mode disabled: Auto QSO hidden. CQ retry remains a normal operator control.");
-        return;
-    }
-
-    bool ok = false;
-    const QString phrase = QInputDialog::getText(
-        this,
-        uiText("ft8_evil_mode_unlock_title", "Unlock Evil mode"),
-        uiText("ft8_evil_mode_unlock_prompt", "Enter the unlock phrase to enable automatic FT helpers:"),
-        QLineEdit::Normal,
-        QString(),
-        &ok).trimmed();
-
-    const QString unlockPhrase = QStringLiteral("I AM ") + QStringLiteral("EVIL");
-    if (!ok || phrase != unlockPhrase) {
-        const QSignalBlocker block(m_chkFt8EvilMode);
-        m_chkFt8EvilMode->setChecked(false);
-        m_ft8EvilModeUnlocked = false;
-        updateFt8EvilModeVisibility();
-        QMessageBox::information(this,
-                                 uiText("ft8_evil_mode_locked_title", "Evil mode locked"),
-                                 uiText("ft8_evil_mode_locked_text", "Auto CQ / Auto QSO remain hidden. The unlock phrase was not accepted."));
-        return;
-    }
-
-    m_ft8EvilModeUnlocked = true;
-    traceFtAutomation("control", "evil_unlocked");
-    updateFt8EvilModeVisibility();
-    appendLog("FT Evil mode unlocked: WSJT-Z-style Auto CQ / Auto QSO controls are now visible for this session.");
 }
 
 void MainWindow::handleFt8AutoCqToggled(bool enabled)
@@ -17282,10 +17237,10 @@ void MainWindow::handleFt8FullAutoQsoToggled(bool enabled)
         return;
     }
 
-    if (enabled && !m_ft8EvilModeUnlocked) {
+    if (enabled && !m_ft8AutoModeEnabled) {
         const QSignalBlocker block(m_chkFt8FullAutoQso);
         m_chkFt8FullAutoQso->setChecked(false);
-        updateFt8EvilModeVisibility();
+        updateFt8AutoModeVisibility();
         return;
     }
 
@@ -17376,7 +17331,7 @@ void MainWindow::selectFt8OppositePeriodFromDecode(const Ft8RxDecoder::Decode &d
 bool MainWindow::canCollectFt8FullAutoCqs() const
 {
     return !m_ft8OperatorStopLatched && !m_shutdownInProgress && !m_runtimeShutdownComplete &&
-        !m_offlineAnalysisActive && m_ft8EvilModeUnlocked && m_chkFt8FullAutoQso &&
+        !m_offlineAnalysisActive && m_ft8AutoModeEnabled && m_chkFt8FullAutoQso &&
         m_chkFt8FullAutoQso->isChecked() && ui && ui->cmbMode &&
         Ft8Mode::isFamilyMode(ui->cmbMode->currentText());
 }
@@ -17423,7 +17378,7 @@ bool MainWindow::canStartFt8FullAutoQsoNow() const
     }
     if (m_chkFt8CallerQueue != nullptr && m_chkFt8CallerQueue->isChecked() && !m_ft8CallerQueue.isEmpty()) {
         // Direct callers already waiting in the explicit FIFO always have
-        // priority over answering a new generic CQ in Evil/Auto QSO mode.
+        // priority over answering a new generic CQ in Auto QSO mode.
         return false;
     }
 
@@ -17589,7 +17544,7 @@ bool MainWindow::queueFt8FullAutoCqCandidate(const Ft8RxDecoder::Decode &decode,
 void MainWindow::processFt8FullAutoCqCandidates()
 {
     if (m_ft8FullAutoCqCandidates.isEmpty() || !canStartFt8FullAutoQsoNow()) {
-        if (m_ft8EvilModeUnlocked && m_chkFt8FullAutoQso && m_chkFt8FullAutoQso->isChecked())
+        if (m_ft8AutoModeEnabled && m_chkFt8FullAutoQso && m_chkFt8FullAutoQso->isChecked())
             traceFtAutomation("wait",ftAutomationWaitReason(),{},true);
         return;
     }
@@ -17638,7 +17593,7 @@ void MainWindow::processFt8FullAutoCqCandidates()
 
 bool MainWindow::tryStartFt8FullAutoQso(const Ft8RxDecoder::Decode &decode, const QVariantMap &logbookStatus)
 {
-    // Evil/Auto QSO is a CQ responder only.  Do not ever start an unattended
+    // Auto QSO is a CQ responder only.  Do not ever start an unattended
     // sequence from ordinary directed traffic, reports, 73/RR73, or stations
     // that are already working somebody else.
     const ParsedFt8Message parsed = parseFt8MessageText(decode.message, stationCallsign());
@@ -18026,8 +17981,93 @@ void MainWindow::considerFt8CallerForQueue(const Ft8RxDecoder::Decode &decode, b
                   .arg(decode.frequencyHz));
 }
 
+void MainWindow::handleFt8LateFinal(const Ft8RxDecoder::Decode &decode, const QString &senderCall)
+{
+    const QString call = AdifLogbook::normalizeCallsign(senderCall);
+    if (call.isEmpty()) return;
+    if (m_ftSession.qsoActive && FtDecodedText::callMatches(call, m_ftSession.dxCall)) {
+        return;   // the running QSO: the normal sequencer handles it
+    }
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    constexpr qint64 kLateFinalMaxAgeSeconds = 15 * 60;
+    for (auto it = m_ft8RReportQsos.begin(); it != m_ft8RReportQsos.end();) {
+        if (!it->rReportSentUtc.isValid() || it->rReportSentUtc.secsTo(now) > kLateFinalMaxAgeSeconds) it = m_ft8RReportQsos.erase(it);
+        else ++it;
+    }
+    auto it = m_ft8RReportQsos.find(call);
+    if (it == m_ft8RReportQsos.end()) return;
+
+    FtQsoSession session = it->session;
+    m_ft8RReportQsos.erase(it);
+    session.autoLogDone = false;
+    autoLogFt8QsoFor(session, QStringLiteral("late final acknowledgement received"));
+    appendLog(QStringLiteral("FT late final: %1 sent %2 after the QSO had been given up; both reports were exchanged, QSO logged. A 73 follows after the current QSO.")
+                  .arg(call, decode.message.trimmed().toUpper()));
+    traceFtAutomation("qso.late_final","logged",{{"candidate_call",call},{"rx_message",decode.message},{"rx_slot_utc_ms",decode.slotStartUtcMs}},true);
+
+    // Answer the RR73 (not a plain 73) with one 73, as the normal sequencer does.
+    if (!parsed73IsReplyWorthy(decode.message)) return;
+    Ft8LateFinal pending;
+    pending.session = session;
+    pending.session.autoLogDone = true;
+    pending.decode = decode;
+    pending.receivedUtc = now;
+    for (int i = m_ft8LateFinals.size() - 1; i >= 0; --i) {
+        if (FtDecodedText::callMatches(m_ft8LateFinals.at(i).session.dxCall, call)) m_ft8LateFinals.removeAt(i);
+    }
+    m_ft8LateFinals.append(pending);
+    QTimer::singleShot(0, this, [this]() { activateNextFt8QueuedCaller(); });
+}
+
+bool MainWindow::parsed73IsReplyWorthy(const QString &message)
+{
+    // RR73/RRR expect a final 73; a plain 73 ends the QSO without reply.
+    const QStringList parts = message.trimmed().toUpper().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    return !parts.isEmpty() && (parts.last() == QStringLiteral("RR73") || parts.last() == QStringLiteral("RRR"));
+}
+
+bool MainWindow::activateNextFt8LateFinal()
+{
+    if (m_ft8OperatorStopLatched || !Ft8Mode::isFamilyMode(ui->cmbMode->currentText())) return false;
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    // A 73 is only worth sending while the station may still listen for it.
+    constexpr qint64 kLate73MaxAgeSeconds = 120;
+    while (!m_ft8LateFinals.isEmpty()) {
+        const Ft8LateFinal pending = m_ft8LateFinals.takeFirst();
+        if (!pending.receivedUtc.isValid() || pending.receivedUtc.secsTo(now) > kLate73MaxAgeSeconds) {
+            appendLog(QStringLiteral("FT late final: no 73 to %1, its RR73 is more than 2 minutes old (QSO is logged).")
+                          .arg(pending.session.dxCall));
+            continue;
+        }
+        // Restore the given-up QSO in its "waiting for RR73" state and hand the
+        // RR73 to the normal sequencer: it sends the 73 in the right period and
+        // completes the QSO (already logged, so no second log entry).
+        selectFt8OppositePeriodFromDecode(pending.decode);
+        m_ftSession.clearQso();
+        m_ftSession.startQso(pending.session.dxCall, pending.session.dxGrid, pending.session.audioFreqHz,
+                             pending.session.qsoStartUtc.isValid() ? pending.session.qsoStartUtc : now);
+        m_ftSession.reportSent = pending.session.reportSent;
+        m_ftSession.reportReceived = pending.session.reportReceived;
+        m_ftSession.autoLogDone = true;
+        m_ftSession.state = Ft8SequencerState::WaitingFinal73;
+        m_ft8AutoNoResponseCooldown.remove(pending.session.dxCall.trimmed().toUpper());
+        appendLog(QStringLiteral("FT late final: sending 73 to %1.").arg(pending.session.dxCall));
+        traceFtAutomation("qso.late_final","send_73",{{"candidate_call",pending.session.dxCall},{"rx_message",pending.decode.message}});
+        processFt8SequencerDecode(pending.decode);
+        if (m_ftSession.qsoActive || m_ft8PendingTxArmed || m_hasDeferredFt8TxPlan) return true;
+    }
+    return false;
+}
+
 bool MainWindow::activateNextFt8QueuedCaller()
 {
+    {
+        const bool busyForLate73 = m_ftSession.qsoActive || m_txRunning || m_ftTxWorkerRunning ||
+                                   (m_txAudioEngine != nullptr && m_txAudioEngine->isRunning()) ||
+                                   m_ft8PendingTxArmed || m_hasDeferredFt8TxPlan ||
+                                   !m_pendingFt8TxPlan.message.trimmed().isEmpty();
+        if (!busyForLate73 && !m_ft8LateFinals.isEmpty() && activateNextFt8LateFinal()) return true;
+    }
     if (m_chkFt8CallerQueue == nullptr || !m_chkFt8CallerQueue->isChecked() ||
         m_ft8OperatorStopLatched || !Ft8Mode::isFamilyMode(ui->cmbMode->currentText())) {
         return false;
@@ -18340,6 +18380,15 @@ void MainWindow::handleFt8TxCompleted()
         return;
     }
 
+    if (m_ftSession.state == Ft8SequencerState::SendingRReport && !m_ftSession.dxCall.isEmpty()) {
+        // Both reports are exchanged now. Should the QSO be given up (no answer,
+        // the station turns to someone else) and the RR73 still come later,
+        // it is a complete QSO: see handleFt8LateFinal().
+        Ft8RReportQso &late = m_ft8RReportQsos[AdifLogbook::normalizeCallsign(m_ftSession.dxCall)];
+        late.session = m_ftSession;
+        late.rReportSentUtc = now;
+    }
+
     const FtQsoSequencer::TxCompleteDecision decision = FtQsoSequencer::onTxCompleted(m_ftSession.state);
     m_ftSession.state = decision.nextState;
     traceFtAutomation("qso.advance","tx_completed");
@@ -18402,6 +18451,8 @@ void MainWindow::completeFt8Qso(const QString &reason)
         updateFt8SessionQueueUi();
     }
 
+    m_ft8RReportQsos.remove(AdifLogbook::normalizeCallsign(completedCall));
+
     m_lastCompletedFt8Call = completedCall;
     m_lastCompletedFt8Utc = QDateTime::currentDateTimeUtc();
     m_lastCompletedFt8Reason = reason;
@@ -18418,9 +18469,9 @@ void MainWindow::completeFt8Qso(const QString &reason)
     m_deferredFt8TxPlan.tag.clear();
     m_deferredFt8TxPlan = FtTxPlan();
     m_ftSession.deferredState = Ft8SequencerState::Idle;
-    const bool evilAutoQso = m_ft8EvilModeUnlocked && m_chkFt8FullAutoQso != nullptr && m_chkFt8FullAutoQso->isChecked();
-    if (evilAutoQso) {
-        appendLog(currentAdifMode() + " QSO complete: Evil Auto QSO remains armed and will answer the next decoded CQ subject to blacklist/duplicate policy.");
+    const bool autoQsoArmed = m_ft8AutoModeEnabled && m_chkFt8FullAutoQso != nullptr && m_chkFt8FullAutoQso->isChecked();
+    if (autoQsoArmed) {
+        appendLog(currentAdifMode() + " QSO complete: Auto QSO remains armed and will answer the next decoded CQ subject to blacklist/duplicate policy.");
     } else {
         appendLog(currentAdifMode() + " QSO complete: CQ auto-resume disabled; staying in RX.");
     }
@@ -18430,28 +18481,33 @@ void MainWindow::completeFt8Qso(const QString &reason)
 
 void MainWindow::autoLogFt8Qso(const QString &reason)
 {
+    autoLogFt8QsoFor(m_ftSession, reason);
+}
+
+void MainWindow::autoLogFt8QsoFor(const FtQsoSession &session, const QString &reason)
+{
     const bool autoLog = (m_chkFt8AutoLog != nullptr) ? m_chkFt8AutoLog->isChecked() : m_settings.ft8AutoLog;
-    if (!autoLog || m_ftSession.autoLogDone || m_ftSession.dxCall.isEmpty()) {
+    if (!autoLog || session.autoLogDone || session.dxCall.isEmpty()) {
         return;
     }
 
     LogbookEntry entry;
-    entry.callsign = AdifLogbook::normalizeCallsign(m_ftSession.dxCall);
+    entry.callsign = AdifLogbook::normalizeCallsign(session.dxCall);
     entry.stationCallsign = stationCallsign();
     entry.operatorCall = stationCallsign();
     entry.adifFields.insert(QStringLiteral("APP_MADMODEM_QSO_ID"), QUuid::createUuid().toString(QUuid::WithoutBraces));
     entry.adifFields.insert(QStringLiteral("MY_GRIDSQUARE"), stationLocator());
-    entry.rstSent = m_ftSession.reportSent.isEmpty() ? QStringLiteral("-10") : cleanFt8Report(m_ftSession.reportSent);
-    entry.rstReceived = m_ftSession.reportReceived.isEmpty() ? QStringLiteral("-10") : cleanFt8Report(m_ftSession.reportReceived);
+    entry.rstSent = session.reportSent.isEmpty() ? QStringLiteral("-10") : cleanFt8Report(session.reportSent);
+    entry.rstReceived = session.reportReceived.isEmpty() ? QStringLiteral("-10") : cleanFt8Report(session.reportReceived);
     entry.band = (m_cmbFt8Band != nullptr) ? m_cmbFt8Band->currentText().trimmed().toLower() : m_settings.ft8Band.toLower();
     entry.mode = Ft8Mode::profileForMode(ui->cmbMode != nullptr ? ui->cmbMode->currentText() : QStringLiteral("FT8")).adifMode;
-    QString qsoGrid = m_ftSession.dxGrid.trimmed().toUpper();
+    QString qsoGrid = session.dxGrid.trimmed().toUpper();
     if (qsoGrid.isEmpty() || !FtDecodedText::isGrid(qsoGrid.left(4))) {
-        qsoGrid = m_ftSession.knownGridFor(m_ftSession.dxCall).trimmed().toUpper();
+        qsoGrid = session.knownGridFor(session.dxCall).trimmed().toUpper();
     }
-    qsoGrid = CtyCountryFile::instance().refinedGridForCallsign(m_ftSession.dxCall, qsoGrid, 6);
+    qsoGrid = CtyCountryFile::instance().refinedGridForCallsign(session.dxCall, qsoGrid, 6);
     entry.grid = FtDecodedText::isGrid(qsoGrid.left(4)) ? qsoGrid.left(qsoGrid.size() >= 6 ? 6 : 4) : QString();
-    const CtyCountryFile::LookupResult qsoCty = CtyCountryFile::instance().lookupCallsign(m_ftSession.dxCall);
+    const CtyCountryFile::LookupResult qsoCty = CtyCountryFile::instance().lookupCallsign(session.dxCall);
     if (qsoCty.valid) {
         entry.country = qsoCty.entity.name;
         entry.adifFields.insert(QStringLiteral("DXCC"), qsoCty.entity.dxcc);
@@ -18462,14 +18518,14 @@ void MainWindow::autoLogFt8Qso(const QString &reason)
         entry.adifFields.insert(QStringLiteral("CTY_LAT"), QString::number(qsoCty.entity.latitude, 'f', 4));
         entry.adifFields.insert(QStringLiteral("CTY_LON"), QString::number(qsoCty.entity.longitude, 'f', 4));
     }
-    entry.utc = m_ftSession.qsoStartUtc.isValid() ? m_ftSession.qsoStartUtc : QDateTime::currentDateTimeUtc();
+    entry.utc = session.qsoStartUtc.isValid() ? session.qsoStartUtc : QDateTime::currentDateTimeUtc();
     entry.utcEnd = QDateTime::currentDateTimeUtc();
     entry.comment = QString("%1 auto-sequence: %2; RX audio %3 Hz; TX audio %4 Hz; final %5")
                         .arg(entry.mode,
                              reason,
-                             QString::number(m_ftSession.audioFreqHz > 0 ? m_ftSession.audioFreqHz : (m_spinFt8RxFreq != nullptr ? m_spinFt8RxFreq->value() : 0)),
+                             QString::number(session.audioFreqHz > 0 ? session.audioFreqHz : (m_spinFt8RxFreq != nullptr ? m_spinFt8RxFreq->value() : 0)),
                              QString::number(m_spinFt8TxFreq != nullptr ? m_spinFt8TxFreq->value() : m_settings.ft8TxFrequencyHz),
-                             m_ftSession.lastTxPlan.message.isEmpty() ? QStringLiteral("--") : m_ftSession.lastTxPlan.message);
+                             session.lastTxPlan.message.isEmpty() ? QStringLiteral("--") : session.lastTxPlan.message);
 
     if (entry.callsign.isEmpty()) {
         return;
@@ -19011,6 +19067,279 @@ qint64 MainWindow::selectedFt8TxSlotBoundaryUtcMs(bool allowManualLatePartial) c
     return boundary;
 }
 
+bool MainWindow::ft8DecodeRowPassesFilter(int row) const
+{
+    const bool cqEnd = m_settings.ftDecodeFilterCqEnd;
+    const bool worked = m_settings.ftDecodeFilterWorked;
+    if (m_tableFt8Rx == nullptr || (!cqEnd && !worked)) {
+        return true;
+    }
+    const QTableWidgetItem *messageItem = m_tableFt8Rx->item(row, 4);
+    const QTableWidgetItem *dbItem = m_tableFt8Rx->item(row, 1);
+    if (messageItem == nullptr || dbItem == nullptr) {
+        return true;   // a slot separator
+    }
+    bool numericDb = false;
+    dbItem->text().toInt(&numericDb);
+    if (!numericDb) {
+        return true;   // my own TX line (tag instead of a dB value)
+    }
+    QString message = messageItem->data(kFtOriginalMessageRole).toString();
+    if (message.isEmpty()) message = messageItem->text();
+    const QString myCall = stationCallsign();
+    if (FtDecodeFilter::lineKind(message, myCall) == FtDecodeFilter::LineKind::MyCall) {
+        return true;   // lines to me always stay
+    }
+    if (cqEnd && !FtDecodeFilter::passesCqEnd(message, myCall)) {
+        return false;
+    }
+    if (worked) {
+        const qint64 pendingSince = messageItem->data(kFtLogPendingSinceRole).toLongLong();
+        if (pendingSince > 0 && QDateTime::currentMSecsSinceEpoch() - pendingSince < kFtLogPendingHideMs) {
+            return false;   // logbook answer pending: do not show it just to hide it again
+        }
+    }
+    if (worked && FtDecodeFilter::hiddenAsWorked(messageItem->data(kFtWorkedRole).toBool(),
+                                                 messageItem->data(kFtLastQsoUtcRole).toDateTime(),
+                                                 m_settings.ftDecodeFilterWorkedDays,
+                                                 QDateTime::currentDateTimeUtc())) {
+        return false;
+    }
+    return true;
+}
+
+void MainWindow::updateFt8DecodeFilterButton()
+{
+    if (m_btnFt8DecodeFilter == nullptr) {
+        return;
+    }
+    const int active = (m_settings.ftDecodeFilterCqEnd ? 1 : 0) + (m_settings.ftDecodeFilterWorked ? 1 : 0);
+    const QString title = uiText("ft_filter", "Filter");
+    m_btnFt8DecodeFilter->setText(active > 0 ? QStringLiteral("%1 (%2) ▾").arg(title).arg(active)
+                                             : title + QStringLiteral(" ▾"));
+    QFont f = m_btnFt8DecodeFilter->font();
+    f.setBold(active > 0);
+    m_btnFt8DecodeFilter->setFont(f);
+    if (m_spinFt8FilterWorkedDays != nullptr) {
+        m_spinFt8FilterWorkedDays->setEnabled(m_settings.ftDecodeFilterWorked);
+    }
+}
+
+// Colours one decode row as JTDX does (see FtDecodeColours.h) from the
+// logbook state of the station the line is about, and applies the filters.
+// A missing logbook state is queued; the row is restyled when it arrives.
+void MainWindow::styleFt8DecodeRow(int row, QVariantList *missingQueries, QSet<QString> *queuedKeys)
+{
+    using namespace FtDecodeColours;
+    if (m_tableFt8Rx == nullptr || row < 0 || row >= m_tableFt8Rx->rowCount()) return;
+    QTableWidgetItem *messageItem = m_tableFt8Rx->item(row, 4);
+    QTableWidgetItem *dbItem = m_tableFt8Rx->item(row, 1);
+    if (messageItem == nullptr || dbItem == nullptr) return;   // separator
+    bool numericDb = false;
+    dbItem->text().toInt(&numericDb);
+    if (!numericDb) return;                                     // my TX line
+
+    QString message = messageItem->data(kFtOriginalMessageRole).toString().trimmed().toUpper();
+    if (message.isEmpty()) message = messageItem->text().trimmed().toUpper();
+    const QString myCall = stationCallsign();
+    const ParsedFt8Message parsed = parseFt8MessageText(message, myCall);
+
+    // The station the line is about: the CQ caller or the sender (JTDX).
+    QString station = parsed.cq ? ft8CqCallsignFromMessage(parsed) : parsed.senderCall;
+    if (station.trimmed().isEmpty()) station = ft8PrimaryCallsignForDisplay(parsed, myCall);
+    station = AdifLogbook::normalizeCallsign(station);
+
+    bool blacklisted = false;
+    QStringList filterCalls = ft8HighlightCandidateCallsigns(parsed, myCall);
+    filterCalls << station << parsed.senderCall;
+    for (const QString &call : std::as_const(filterCalls)) {
+        if (!call.trimmed().isEmpty() && isFtCallBlacklisted(call)) {
+            blacklisted = true;
+            break;
+        }
+    }
+
+    LogStatus log;
+    QString country;
+    QString grid4;
+    if (!station.isEmpty()) {
+        QString grid = (FtDecodedText::callMatches(station, parsed.senderCall) || parsed.cq) ? parsed.grid : QString();
+        if (!FtDecodedText::isGrid(grid.left(4)) || FtDecodedText::isAckLikeGridTrap(grid.left(4))) {
+            grid = m_ftSession.knownGridFor(station);
+        }
+        grid4 = ft8MaidenheadGrid4(grid);
+        const CtyCountryFile::LookupResult cty = CtyCountryFile::instance().lookupCallsign(station);
+        if (cty.valid) country = cty.entity.name;
+        const QString band = (m_cmbFt8Band != nullptr) ? m_cmbFt8Band->currentText().trimmed().toLower()
+                                                       : m_settings.ft8Band.trimmed().toLower();
+        const QVariantMap query = makeFtLogbookQuery(station, band, currentAdifMode().trimmed().toUpper(),
+                                                     cty.valid ? cty.entity.dxcc : QString(), grid,
+                                                     qBound(1, m_settings.ftAutoQsoRecentHours, 168), 0);
+        const QVariantMap status = cachedFtLogbookStatus(query);
+        if (status.isEmpty()) {
+            const QString key = query.value(QStringLiteral("cacheKey")).toString();
+            if (missingQueries != nullptr && !key.isEmpty() &&
+                (queuedKeys == nullptr || !queuedKeys->contains(key))) {
+                if (queuedKeys != nullptr) queuedKeys->insert(key);
+                missingQueries->push_back(query);
+            }
+        } else {
+            log.known = true;
+            log.callWorked = status.value(QStringLiteral("worked")).toBool();
+            log.callWorkedBandMode = status.value(QStringLiteral("latestBandModeUtc")).toDateTime().isValid();
+            log.dxccKnown = cty.valid && !cty.entity.dxcc.trimmed().isEmpty();
+            log.dxccWorked = status.value(QStringLiteral("countryWorkedAny")).toBool();
+            log.dxccWorkedBand = status.value(QStringLiteral("countryWorkedBand")).toBool();
+            log.gridKnown = !grid4.isEmpty();
+            log.gridWorked = status.value(QStringLiteral("gridWorkedAny")).toBool();
+            log.gridWorkedBand = status.value(QStringLiteral("gridWorkedBand")).toBool();
+            log.lastQsoUtc = status.value(QStringLiteral("latestCallUtc")).toDateTime();
+        }
+    }
+
+    FtDecodeFilter::LineKind kind = FtDecodeFilter::lineKind(message, myCall);
+    if (isFt8DirectReplyToMyCall(parsed, myCall)) kind = FtDecodeFilter::LineKind::MyCall;
+    else if (parsed.cq) kind = FtDecodeFilter::LineKind::Cq;
+    const bool standard = kind == FtDecodeFilter::LineKind::Standard;
+
+    Options options;
+    options.newDxcc = m_settings.ftHighlightNewDxcc;
+    options.newGrid = m_settings.ftHighlightNewGrid;
+    options.newCall = m_settings.ftHighlightNewCall;
+    const Novelty n = novelty(log, options);
+
+    const QColor base = m_tableFt8Rx->palette().color(QPalette::Base);
+    const bool dark = isDark(base);
+    QColor newBackground;
+    QString tip;
+    const QString when = log.lastQsoUtc.isValid() ? log.lastQsoUtc.toUTC().toString(QStringLiteral("yyyy-MM-dd")) : QString();
+    switch (n) {
+    case Novelty::NewDxcc:
+        newBackground = mmColourFromSetting(m_settings.ftHighlightNewDxccBackground, QColor(0xc0, 0x00, 0xc0));
+        tip = uiText("ft_new_dxcc_country_tooltip", "New DXCC country not present in logbook: %1").arg(country);
+        break;
+    case Novelty::NewDxccBand:
+        newBackground = mmColourFromSetting(m_settings.ftHighlightNewDxccBandBackground, QColor(0xd0, 0x80, 0xd0));
+        tip = uiText("ft_new_dxcc_band_tooltip", "New DXCC on this band: %1").arg(country);
+        break;
+    case Novelty::NewGrid:
+        newBackground = mmColourFromSetting(m_settings.ftHighlightNewGridBackground, QColor(0x00, 0xa0, 0xa0));
+        tip = uiText("ft_new_grid_tooltip", "New grid square: %1").arg(grid4);
+        break;
+    case Novelty::NewGridBand:
+        newBackground = mmColourFromSetting(m_settings.ftHighlightNewGridBandBackground, QColor(0x80, 0xd0, 0xd0));
+        tip = uiText("ft_new_grid_band_tooltip", "New grid square on this band: %1").arg(grid4);
+        break;
+    case Novelty::NewCall:
+        newBackground = mmColourFromSetting(m_settings.ftHighlightNewCallBackground, QColor(0xa0, 0xa0, 0x30));
+        tip = MadModemI18n::text(QStringLiteral("Needed station: %1 is not in the ADIF logbook yet. You can call it after the current QSO/73, even if this line is not CQ.")).arg(station);
+        break;
+    case Novelty::NewCallBand:
+        newBackground = mmColourFromSetting(m_settings.ftHighlightNewCallBandBackground, QColor(0xe0, 0xe0, 0x70));
+        tip = uiText("ft_new_call_band_tooltip", "%1 is not yet worked on this band and mode (last QSO %2)").arg(station, when);
+        break;
+    case Novelty::Worked:
+        tip = uiText("ft_worked_last_tooltip", "Worked before: %1, last QSO %2").arg(station, when);
+        break;
+    default:
+        break;
+    }
+    if (newBackground.isValid()) newBackground = forTheme(newBackground, dark);
+
+    QColor text;
+    if (kind == FtDecodeFilter::LineKind::MyCall) text = mmColourFromSetting(m_settings.ftHighlightMyCallForeground, QColor(255, 0, 0));
+    else if (standard) text = mmColourFromSetting(m_settings.ftHighlightStandardForeground, QColor(0x70, 0x70, 0x70));
+    else text = mmColourFromSetting(m_settings.ftHighlightCqForeground, QColor(0, 0, 0));
+
+    QColor rowBackground = (!standard && newBackground.isValid()) ? newBackground : base;
+    bool bold = kind == FtDecodeFilter::LineKind::MyCall || (!standard && newBackground.isValid());
+    const bool strike = n == Novelty::Worked && !standard && m_settings.logbookStrikeWorkedCalls;
+    if (blacklisted) {
+        rowBackground = QColor(82, 0, 0);
+        text = QColor(255, 92, 92);
+        bold = true;
+        tip = uiText("ft_blacklisted_decode_tooltip",
+                     "Blacklisted call: decoded and shown with a skull, but ignored by AutoQSO and the sequencer.");
+    }
+    const bool redOutline = !blacklisted && m_settings.ftHighlightNewCountryEnabled &&
+                            log.known && log.dxccKnown && !log.dxccWorked;
+
+    for (int col = 0; col < m_tableFt8Rx->columnCount(); ++col) {
+        QTableWidgetItem *it = m_tableFt8Rx->item(row, col);
+        if (it == nullptr) continue;
+        // Other traffic keeps a plain row; its call cell shows what the
+        // station is new for (JTDX marker).
+        const QColor bg = (!blacklisted && standard && col == 5 && newBackground.isValid()) ? newBackground : rowBackground;
+        it->setBackground(QBrush(bg));
+        it->setForeground(QBrush(readable(text, bg)));
+        QFont f = m_tableFt8Rx->font();
+        f.setBold(bold);
+        f.setStrikeOut(strike);
+        it->setFont(f);
+        it->setData(kFtRowRedOutlineRole, redOutline);
+    }
+    messageItem->setToolTip(tip);
+    messageItem->setData(kFtWorkedRole, log.known && log.callWorked);
+    messageItem->setData(kFtLastQsoUtcRole, log.lastQsoUtc);
+    if (log.known || station.isEmpty()) {
+        messageItem->setData(kFtLogPendingSinceRole, QVariant());
+    } else if (messageItem->data(kFtLogPendingSinceRole).toLongLong() <= 0) {
+        messageItem->setData(kFtLogPendingSinceRole, QDateTime::currentMSecsSinceEpoch());
+        scheduleFt8PendingFilterRecheck();
+    }
+    applyFt8DecodeFilterToRow(row);
+}
+
+void MainWindow::scheduleFt8PendingFilterRecheck()
+{
+    // One recheck for all rows still waiting for the logbook: show the ones
+    // whose answer never came (the regular restyle handles all others).
+    if (m_ft8PendingFilterRecheckQueued || !m_settings.ftDecodeFilterWorked) {
+        return;
+    }
+    m_ft8PendingFilterRecheckQueued = true;
+    QTimer::singleShot(kFtLogPendingHideMs + 100, this, [this]() {
+        m_ft8PendingFilterRecheckQueued = false;
+        if (m_tableFt8Rx == nullptr) return;
+        bool stillPending = false;
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        for (int row = 0; row < m_tableFt8Rx->rowCount(); ++row) {
+            const QTableWidgetItem *messageItem = m_tableFt8Rx->item(row, 4);
+            const qint64 since = messageItem ? messageItem->data(kFtLogPendingSinceRole).toLongLong() : 0;
+            if (since <= 0) continue;
+            if (now - since >= kFtLogPendingHideMs) {
+                if (m_tableFt8Rx->isRowHidden(row)) applyFt8DecodeFilterToRow(row);
+            } else {
+                stillPending = true;
+            }
+        }
+        if (stillPending) scheduleFt8PendingFilterRecheck();
+        if (m_chkFt8AutoScroll == nullptr || m_chkFt8AutoScroll->isChecked()) m_tableFt8Rx->scrollToBottom();
+    });
+}
+
+void MainWindow::applyFt8DecodeFilterToRow(int row)
+{
+    if (m_tableFt8Rx != nullptr && row >= 0 && row < m_tableFt8Rx->rowCount()) {
+        m_tableFt8Rx->setRowHidden(row, !ft8DecodeRowPassesFilter(row));
+    }
+}
+
+void MainWindow::applyFt8DecodeFilter()
+{
+    if (m_tableFt8Rx == nullptr) {
+        return;
+    }
+    m_tableFt8Rx->setUpdatesEnabled(false);
+    for (int row = 0; row < m_tableFt8Rx->rowCount(); ++row) {
+        applyFt8DecodeFilterToRow(row);
+    }
+    m_tableFt8Rx->setUpdatesEnabled(true);
+    if (m_chkFt8AutoScroll == nullptr || m_chkFt8AutoScroll->isChecked()) {
+        m_tableFt8Rx->scrollToBottom();
+    }
+}
+
 void MainWindow::appendFt8LocalTxRow(const QString &message, int frequencyHz, const QString &tag)
 {
     if (m_tableFt8Rx == nullptr) {
@@ -19024,6 +19353,7 @@ void MainWindow::appendFt8LocalTxRow(const QString &message, int frequencyHz, co
         for (int col = 0; col < m_tableFt8Rx->columnCount(); ++col) {
             QTableWidgetItem *sep = new QTableWidgetItem(col == 0 ? QStringLiteral("──── %1 ────").arg(utc) : QString());
             sep->setFlags(sep->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsSelectable);
+            sep->setData(kFtSlotSeparatorRole, true);
             sep->setBackground(QBrush(m_tableFt8Rx->palette().color(QPalette::AlternateBase)));
             sep->setForeground(QBrush(MadModemUi::themeColor(MadModemUi::ThemeColorRole::MutedText)));
             QFont f = m_tableFt8Rx->font();
@@ -19046,8 +19376,9 @@ void MainWindow::appendFt8LocalTxRow(const QString &message, int frequencyHz, co
           << new QTableWidgetItem(QString())
           << new QTableWidgetItem(QString())
           << new QTableWidgetItem(QString());
-    const QColor txBackground = mmColourFromSetting(m_settings.ftHighlightTxBackground, QColor(255, 247, 95));
-    const QColor txForeground = mmColourFromSetting(m_settings.ftHighlightTxForeground, QColor(0, 0, 0));
+    const QColor txBackground = FtDecodeColours::forTheme(mmColourFromSetting(m_settings.ftHighlightTxBackground, QColor(0xee, 0xee, 0x00)),
+                                                          FtDecodeColours::isDark(m_tableFt8Rx->palette().color(QPalette::Base)));
+    const QColor txForeground = FtDecodeColours::readable(mmColourFromSetting(m_settings.ftHighlightTxForeground, QColor(0, 0, 0)), txBackground);
     for (QTableWidgetItem *it : items) {
         it->setBackground(QBrush(txBackground));
         it->setForeground(QBrush(txForeground));
@@ -19166,7 +19497,7 @@ void MainWindow::finishFt8ResponseWait(quint64 retryGeneration, qint64 replySlot
         m_ftSession.retryGeneration != retryGeneration || replySlotUtcMs <= 0 ||
         m_ftSession.retryReplySlotUtcMs != replySlotUtcMs) return;
     const QString dx = m_ftSession.dxCall.trimmed().toUpper();
-    const bool fullAutoEnabled = m_ft8EvilModeUnlocked &&
+    const bool fullAutoEnabled = m_ft8AutoModeEnabled &&
                                  m_chkFt8FullAutoQso != nullptr &&
                                  m_chkFt8FullAutoQso->isChecked();
     if (fullAutoEnabled && !dx.isEmpty()) {
@@ -19461,6 +19792,9 @@ void MainWindow::handleFt8DecodeReady(const Ft8RxDecoder::Decode &decode)
             m_cmbFt8Band ? m_cmbFt8Band->currentText().trimmed().toLower() : m_settings.ft8Band);
     }
     const bool directReplyToMe = isFt8DirectReplyToMyCall(parsed, myCall);
+    if (!presentationOnly && directReplyToMe && (parsed.rr73 || parsed.rrr || parsed.final73)) {
+        handleFt8LateFinal(decode, parsed.senderCall);
+    }
     const bool cqMessage = parsed.cq;
     QString workedCall = parsed.senderCall;
     if (cqMessage) {
@@ -19478,33 +19812,6 @@ void MainWindow::handleFt8DecodeReady(const Ft8RxDecoder::Decode &decode)
                                                          : m_settings.ft8Band.trimmed().toLower();
     const QString lookupMode = currentAdifMode().trimmed().toUpper();
     const int lookupRecentHours = qBound(1, m_settings.ftAutoQsoRecentHours, 168);
-    QString neededCall;
-    bool allCandidateStatusesKnown = !highlightCandidateCalls.isEmpty();
-    QVariantMap workedStatus;
-    for (const QString &call : highlightCandidateCalls) {
-        QString grid = FtDecodedText::callMatches(call, parsed.senderCall) || parsed.cq ? parsed.grid : QString();
-        if (!FtDecodedText::isGrid(grid.left(4)) || FtDecodedText::isAckLikeGridTrap(grid.left(4))) grid = m_ftSession.knownGridFor(call);
-        const CtyCountryFile::LookupResult cty = CtyCountryFile::instance().lookupCallsign(call);
-        const QVariantMap query = makeFtLogbookQuery(call,
-                                                     lookupBand,
-                                                     lookupMode,
-                                                     cty.valid ? cty.entity.dxcc : QString(),
-                                                     grid,
-                                                     lookupRecentHours,
-                                                     0);
-        const QVariantMap status = cachedFtLogbookStatus(query);
-        if (status.isEmpty()) {
-            allCandidateStatusesKnown = false;
-            continue;
-        }
-        if (status.value(QStringLiteral("worked")).toBool()) {
-            if (workedStatus.isEmpty() && FtDecodedText::callMatches(call, workedCall)) workedStatus = status;
-        } else if (neededCall.isEmpty()) {
-            neededCall = call;
-        }
-    }
-    const bool workedBefore = allCandidateStatusesKnown && !workedCall.isEmpty() &&
-                              !workedStatus.isEmpty() && workedStatus.value(QStringLiteral("worked")).toBool() && neededCall.isEmpty();
     const QString primaryCallForDisplay = ft8PrimaryCallsignForDisplay(parsed, myCall);
     const Ft8DecodeDisplayInfo displayInfo = makeFt8DecodeDisplayInfo(parsed, myCall,
                                                                        primaryCallForDisplay.isEmpty() ? QString() : m_ftSession.knownGridFor(primaryCallForDisplay));
@@ -19523,8 +19830,6 @@ void MainWindow::handleFt8DecodeReady(const Ft8RxDecoder::Decode &decode)
             watchedDecode = true;
         }
     }
-    const bool neededStationForLog = !blacklistedDecode && allCandidateStatusesKnown && !neededCall.isEmpty();
-
     if (blacklistedDecode) {
         ++m_ftDisplayDiagBlacklisted;
         appendLog(QStringLiteral("%1 blacklist: decoded %2 at %3 Hz; marked with skull and ignored by AutoQSO/sequencer.")
@@ -19547,11 +19852,6 @@ void MainWindow::handleFt8DecodeReady(const Ft8RxDecoder::Decode &decode)
                                                         lookupRecentHours,
                                                         0);
     const QVariantMap primaryStatus = cachedFtLogbookStatus(primaryQuery);
-    const bool newCountryForLog = !blacklistedDecode &&
-                                  m_settings.ftHighlightNewCountryEnabled &&
-                                  !dxccForDisplay.isEmpty() &&
-                                  !primaryStatus.isEmpty() &&
-                                  !primaryStatus.value(QStringLiteral("countryWorkedAny")).toBool();
 
     QString bearingText = QStringLiteral("--");
     {
@@ -19721,18 +20021,6 @@ void MainWindow::handleFt8DecodeReady(const Ft8RxDecoder::Decode &decode)
             messageItem->setData(kFtDecodeRole, QVariant::fromValue(decode));
             messageItem->setData(kFtPresentationOnlyRole, presentationOnly);
         }
-        if (newCountryForLog) {
-            const QString neededTip = uiText("ft_new_dxcc_country_tooltip", "New DXCC country not present in logbook: %1").arg(displayInfo.country);
-            for (QTableWidgetItem *item : items) {
-                item->setData(kFtRowRedOutlineRole, true);
-                item->setToolTip(neededTip);
-            }
-        } else if (neededStationForLog) {
-            const QString neededTip = QStringLiteral("Needed station: %1 is not in the ADIF logbook yet. You can call it after the current QSO/73, even if this line is not CQ.").arg(neededCall);
-            for (QTableWidgetItem *item : items) {
-                item->setToolTip(neededTip);
-            }
-        }
         if (QTableWidgetItem *bearingItem = items.value(7, nullptr)) {
             bearingItem->setTextAlignment(Qt::AlignCenter);
             bearingItem->setToolTip(uiText("ft_bearing_tooltip", "Bearing from your configured home locator to the decoded station or DXCC reference grid."));
@@ -19750,77 +20038,16 @@ void MainWindow::handleFt8DecodeReady(const Ft8RxDecoder::Decode &decode)
         }
     }
 
-    for (QTableWidgetItem *item : items) item->setFont(m_tableFt8Rx->font());
-
-    if (blacklistedDecode) {
-        const QColor bg(82, 0, 0);
-        const QColor fg(255, 92, 92);
-        for (QTableWidgetItem *item : items) {
-            item->setForeground(QBrush(fg));
-            item->setBackground(QBrush(bg));
-            QFont font = item->font();
-            font.setBold(true);
-            item->setFont(font);
-            item->setToolTip(uiText("ft_blacklisted_decode_tooltip",
-                                    "Blacklisted call: decoded and shown with a skull, but ignored by AutoQSO and the sequencer."));
-        }
-    } else if (directReplyToMe) {
-        const QColor bg = mmColourFromSetting(m_settings.ftHighlightMyCallBackground, QColor(255, 235, 235));
-        const QColor fg = mmColourFromSetting(m_settings.ftHighlightMyCallForeground, QColor(220, 0, 0));
-        for (QTableWidgetItem *item : items) {
-            item->setForeground(QBrush(fg));
-            item->setBackground(QBrush(bg));
-            QFont font = item->font();
-            font.setBold(true);
-            item->setFont(font);
-        }
-    } else if (cqMessage) {
-        const QColor bg = mmColourFromSetting(m_settings.ftHighlightCqBackground, QColor(68, 92, 28));
-        const QColor fg = mmColourFromSetting(m_settings.ftHighlightCqForeground, QColor(255, 228, 120));
-        for (QTableWidgetItem *item : items) {
-            item->setForeground(QBrush(fg));
-            item->setBackground(QBrush(bg));
-            QFont font = item->font();
-            font.setBold(true);
-            item->setFont(font);
-        }
-    } else if (workedBefore) {
-        const QColor bg = mmColourFromSetting(m_settings.ftHighlightWorkedBackground, QColor(36, 36, 36));
-        const QColor fg = mmColourFromSetting(m_settings.ftHighlightWorkedForeground, QColor(150, 150, 150));
-        for (QTableWidgetItem *item : items) {
-            item->setForeground(QBrush(fg));
-            item->setBackground(QBrush(bg));
-        }
-    } else {
-        // Non-CQ traffic between other stations is useful context, but it must
-        // not compete with CQ calls. Use the active theme's quiet table row;
-        // the old fixed dark/amber row became a black stripe in Qt Classic.
-        const QColor bg = m_tableFt8Rx->palette().color(QPalette::AlternateBase);
-        const QColor fg = MadModemUi::themeColor(MadModemUi::ThemeColorRole::MutedText);
-        for (QTableWidgetItem *item : items) {
-            item->setForeground(QBrush(fg));
-            item->setBackground(QBrush(bg));
-        }
-    }
-    if (workedBefore) {
-        for (QTableWidgetItem *item : items) {
-            QFont font = item->font();
-            if (m_settings.logbookStrikeWorkedCalls) {
-                font.setStrikeOut(true);
-            }
-            item->setFont(font);
-            item->setToolTip(MadModemI18n::text(QStringLiteral("Worked before: %1 is already in the ADIF logbook")).arg(workedCall));
-        }
-    } else if (neededStationForLog) {
-        for (QTableWidgetItem *item : items) {
-            if (item->toolTip().trimmed().isEmpty()) {
-                item->setToolTip(MadModemI18n::text(QStringLiteral("Needed station: %1 is not in the ADIF logbook yet. You can call it after the current QSO/73, even if this line is not CQ.")).arg(neededCall));
-            }
-        }
-    }
-
     for (int col = 0; col < items.size(); ++col) {
         m_tableFt8Rx->setItem(row, col, items.at(col));
+    }
+    {
+        // JTDX colours and the filters; a logbook state still missing is
+        // queued and the row is restyled when it arrives.
+        QVariantList missingQueries;
+        QSet<QString> queuedKeys;
+        styleFt8DecodeRow(row, &missingQueries, &queuedKeys);
+        queueFtLogbookQueries(missingQueries);
     }
     ++m_ftDisplayDiagRowsInserted;
     m_ftDisplayDiagRowsAfter = m_tableFt8Rx->rowCount();
@@ -19831,8 +20058,9 @@ void MainWindow::handleFt8DecodeReady(const Ft8RxDecoder::Decode &decode)
                                QString::number(decode.dt, 'f', 1),
                                decode.frequencyHz,
                                decode.message,
-                               mmColourFromSetting(m_settings.ftHighlightMyCallBackground, QColor(255, 205, 205)),
-                               mmColourFromSetting(m_settings.ftHighlightMyCallForeground, QColor(120, 0, 0)));
+                               m_tableFt8QsoHistory != nullptr ? m_tableFt8QsoHistory->palette().color(QPalette::Base) : QColor(Qt::white),
+                               FtDecodeColours::readable(mmColourFromSetting(m_settings.ftHighlightMyCallForeground, QColor(255, 0, 0)),
+                                                         m_tableFt8QsoHistory != nullptr ? m_tableFt8QsoHistory->palette().color(QPalette::Base) : QColor(Qt::white)));
     }
     while (m_tableFt8Rx->rowCount() > 600) {
         m_tableFt8Rx->removeRow(0);
@@ -19874,7 +20102,7 @@ void MainWindow::addFt8WaterfallOverlayForDecode(const Ft8RxDecoder::Decode &dec
 
     QString call;
     QString label;
-    QColor color = mmColourFromSetting(m_settings.ftHighlightCqForeground, QColor(255, 235, 80));
+    QColor color = QColor(255, 228, 120);
     bool directReplyToMe = false;
     bool blacklistedCallout = false;
     // CQ calls stay for the time set by the operator (0 = none), as in JTDX;
@@ -19900,7 +20128,7 @@ void MainWindow::addFt8WaterfallOverlayForDecode(const Ft8RxDecoder::Decode &dec
             return;
         }
         label = call;   // just the call, as in JTDX: the narrower the labels, the more of them fit
-        color = mmColourFromSetting(m_settings.ftHighlightCqForeground, QColor(255, 235, 80));
+        color = QColor(255, 228, 120);
     } else if (isFt8DirectReplyToMyCall(parsed, myCall)) {
         directReplyToMe = true;
         call = parsed.senderCall.trimmed().toUpper();
@@ -21207,6 +21435,13 @@ void MainWindow::scheduleLiveRxConfig()
     QTimer::singleShot(0,this,&MainWindow::syncLiveRxConfig);
 }
 
+bool MainWindow::keepWaterfallHistory(const QString &modeName) const
+{
+    const bool periodic = Ft8Mode::isFamilyMode(modeName) || Msk144Mode::isMode(modeName) ||
+                          Q65Mode::isFamilyMode(modeName);
+    return periodic && !m_offlineAnalysisActive && modeName == m_waterfallHistoryMode;
+}
+
 void MainWindow::resetDspEngine()
 {
     m_wavWaterfallDecimationCounter = 0;
@@ -21292,6 +21527,7 @@ void MainWindow::openFtWavFile()
     if (m_waterfallWidget != nullptr) {
         m_waterfallWidget->clear();
     }
+    m_waterfallHistoryMode.clear();   // WAV content: the next live RX starts empty
 
     applyFt8Settings();
     ui->lblAudioLevelDb->setText(QStringLiteral("WAV"));
@@ -21407,6 +21643,7 @@ bool MainWindow::analyzeWeatherFaxWavFile(const QString &fileName)
     if (m_waterfallWidget != nullptr) {
         m_waterfallWidget->clear();
     }
+    m_waterfallHistoryMode.clear();   // WAV content: the next live RX starts empty
 
     if (m_faxImageWidget != nullptr) {
         m_faxImageWidget->clear();
@@ -21588,6 +21825,7 @@ bool MainWindow::analyzeSstvWavFile(const QString &fileName)
     if (m_waterfallWidget != nullptr) {
         m_waterfallWidget->clear();
     }
+    m_waterfallHistoryMode.clear();   // WAV content: the next live RX starts empty
 
     if (m_faxImageWidget != nullptr) {
         m_faxImageWidget->clear();
@@ -22996,6 +23234,14 @@ void MainWindow::showAppSettingsDialogPage(AppSettingsDialog::InitialPage page)
     if (m_qrzLookupPanel) m_qrzLookupPanel->setAccountCredentials(m_settings.qrzUsername, m_settings.qrzPassword);
     m_settings.schedulerQsyPlanJson = BandSchedulerDialog::serializeEntries(dialog.schedulerEntries());
     savePersistentSettings();
+    if (m_settings.ftWaterfallCqSeconds != oldSettings.ftWaterfallCqSeconds) {
+        // A changed time applies to the calls already shown, as in JTDX.
+        const int seconds = qBound(0, m_settings.ftWaterfallCqSeconds, 600);
+        for (Ft8WaterfallCallout &callout : m_ft8WaterfallCallouts) {
+            callout.durationMs = (callout.directReplyToMe ? qMax(45, seconds) : seconds) * 1000;
+        }
+        updateFt8WaterfallOverlays();
+    }
     if (m_dspEngine != nullptr && ui->cmbMode != nullptr) {
         QMetaObject::invokeMethod(m_dspEngine, "setTargetRowSeconds", Qt::QueuedConnection,
             Q_ARG(double, waterfallTargetRowSeconds(ui->cmbMode->currentText(), m_settings.ftWaterfallRowMs)));
@@ -23043,12 +23289,18 @@ void MainWindow::showAppSettingsDialogPage(AppSettingsDialog::InitialPage page)
 
     const bool logbookVisualChanged = logbookPathChanged ||
         oldSettings.logbookStrikeWorkedCalls != m_settings.logbookStrikeWorkedCalls ||
-        oldSettings.ftHighlightMyCallBackground != m_settings.ftHighlightMyCallBackground ||
         oldSettings.ftHighlightMyCallForeground != m_settings.ftHighlightMyCallForeground ||
-        oldSettings.ftHighlightCqBackground != m_settings.ftHighlightCqBackground ||
         oldSettings.ftHighlightCqForeground != m_settings.ftHighlightCqForeground ||
-        oldSettings.ftHighlightWorkedBackground != m_settings.ftHighlightWorkedBackground ||
-        oldSettings.ftHighlightWorkedForeground != m_settings.ftHighlightWorkedForeground ||
+        oldSettings.ftHighlightStandardForeground != m_settings.ftHighlightStandardForeground ||
+        oldSettings.ftHighlightNewDxccBackground != m_settings.ftHighlightNewDxccBackground ||
+        oldSettings.ftHighlightNewDxccBandBackground != m_settings.ftHighlightNewDxccBandBackground ||
+        oldSettings.ftHighlightNewGridBackground != m_settings.ftHighlightNewGridBackground ||
+        oldSettings.ftHighlightNewGridBandBackground != m_settings.ftHighlightNewGridBandBackground ||
+        oldSettings.ftHighlightNewCallBackground != m_settings.ftHighlightNewCallBackground ||
+        oldSettings.ftHighlightNewCallBandBackground != m_settings.ftHighlightNewCallBandBackground ||
+        oldSettings.ftHighlightNewDxcc != m_settings.ftHighlightNewDxcc ||
+        oldSettings.ftHighlightNewGrid != m_settings.ftHighlightNewGrid ||
+        oldSettings.ftHighlightNewCall != m_settings.ftHighlightNewCall ||
         oldSettings.ftHighlightTxBackground != m_settings.ftHighlightTxBackground ||
         oldSettings.ftHighlightTxForeground != m_settings.ftHighlightTxForeground ||
         oldSettings.ftHighlightNewCountryEnabled != m_settings.ftHighlightNewCountryEnabled ||
@@ -23433,8 +23685,7 @@ void MainWindow::populateAudioInputs()
 
 #else
 
-    const QList<QAudioDeviceInfo> devices =
-        QAudioDeviceInfo::availableDevices(QAudio::AudioInput);
+    const QList<QAudioDeviceInfo> devices = AudioDeviceCache::devices(QAudio::AudioInput);
 
     for (const QAudioDeviceInfo &device : devices) {
         const QString backendName = device.deviceName();
@@ -23464,8 +23715,7 @@ void MainWindow::populateAudioOutputs()
 
 #else
 
-    const QList<QAudioDeviceInfo> devices =
-        QAudioDeviceInfo::availableDevices(QAudio::AudioOutput);
+    const QList<QAudioDeviceInfo> devices = AudioDeviceCache::devices(QAudio::AudioOutput);
 
     for (const QAudioDeviceInfo &device : devices) {
         const QString backendName = device.deviceName();
@@ -23667,9 +23917,13 @@ void MainWindow::startRx()
         resetDspEngine();
         m_decoderConditioner.reset();
 
-        if (m_waterfallWidget != nullptr) {
+        // FT/MSK144/Q65 alternate RX and TX every period: keep the waterfall
+        // history across the RX restart after each TX, as JTDX/WSJT-X do.
+        // Any other mode, or a mode change, starts with an empty waterfall.
+        if (m_waterfallWidget != nullptr && !keepWaterfallHistory(modeName)) {
             m_waterfallWidget->clear();
         }
+        m_waterfallHistoryMode = modeName;
 
         if (m_faxImageWidget != nullptr) {
             m_faxImageWidget->clear();
@@ -25197,7 +25451,7 @@ void MainWindow::startImageTx()
 
     if (!fastResumeCwRttyTx) {
         resetDspEngine();
-        if (m_waterfallWidget != nullptr) {
+        if (m_waterfallWidget != nullptr && !keepWaterfallHistory(activeModeName)) {
             m_waterfallWidget->clear();
         }
     }

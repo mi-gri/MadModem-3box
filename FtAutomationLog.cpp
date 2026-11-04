@@ -48,17 +48,17 @@ void MainWindow::traceFtAutomation(const QString &action, const QString &reason,
 {
     const bool autoQso = m_chkFt8FullAutoQso && m_chkFt8FullAutoQso->isChecked();
     const QString originalTrace = details.value("trace_id").toString();
-    if (!m_ft8EvilModeUnlocked && !autoQso && m_ftAutomationTraceId.isEmpty() && originalTrace.isEmpty()) return;
+    if (!m_ft8AutoModeEnabled && !autoQso && m_ftAutomationTraceId.isEmpty() && originalTrace.isEmpty()) return;
     if (m_ftAutomationTraceId.isEmpty() && originalTrace.isEmpty()) m_ftAutomationTraceId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     details.insert("trace_id", originalTrace.isEmpty() ? m_ftAutomationTraceId : originalTrace);
     details.insert("trace_schema",1);
     details.insert("version",QStringLiteral(MADMODEM_VERSION_STRING));
-    details.insert("build",QStringLiteral(MADMODEM_BUILD_NUMBER));
+    details.insert("build",QString::fromLatin1(MadModemBuild::number()));
     details.insert("action", action);
     details.insert("reason", reason);
     details.insert("mode", ui && ui->cmbMode ? ui->cmbMode->currentText() : QString());
     details.insert("band", m_cmbFt8Band ? m_cmbFt8Band->currentText() : m_settings.ft8Band);
-    details.insert("evil_unlocked", m_ft8EvilModeUnlocked);
+    details.insert("auto_mode", m_ft8AutoModeEnabled);
     details.insert("auto_qso", autoQso);
     details.insert("operator_stop", m_ft8OperatorStopLatched);
     details.insert("state", stateName(m_ftSession.state));

@@ -1563,66 +1563,78 @@ QWidget *AppSettingsDialog::makeFtColourEditor()
     grid->setHorizontalSpacing(12);
     grid->setVerticalSpacing(8);
 
-    auto addRow = [this, grid](int row,
-                               const QString &label,
-                               ColourButton *background,
-                               const QString &backgroundValue,
-                               ColourButton *foreground,
-                               const QString &foregroundValue) {
-        QLabel *caption = new QLabel(L(label), grid->parentWidget());
+    // Colours as in JTDX: the text colour tells the kind of message, the
+    // background what the station would be new for (checked in this order).
+    auto addColour = [this, grid](int row, int column, const QString &label, const QString &title,
+                                  ColourButton *entry, const QString &value) {
+        grid->addWidget(new QLabel(label, grid->parentWidget()), row, column);
+        entry->title = title + QStringLiteral(" — ") + label;
+        entry->value = colourName(colourFromString(value, QColor(Qt::white)), value);
+        entry->button = new QPushButton(grid->parentWidget());
+        entry->button->setMinimumWidth(110);
+        setColourButton(entry->button, colourFromString(entry->value, QColor(Qt::white)));
+        connect(entry->button, &QPushButton::clicked, this, [this, entry]() { chooseColour(entry); });
+        grid->addWidget(entry->button, row, column + 1);
+    };
+    auto addCaption = [grid](int row, const QString &label) {
+        QLabel *caption = new QLabel(label, grid->parentWidget());
         caption->setMinimumWidth(190);
         grid->addWidget(caption, row, 0);
-
-        QLabel *bgLabel = new QLabel(L(QStringLiteral("Background")), grid->parentWidget());
-        grid->addWidget(bgLabel, row, 1);
-        background->title = label + QStringLiteral(" — ") + QStringLiteral("Background");
-        background->value = colourName(colourFromString(backgroundValue, QColor(Qt::white)), backgroundValue);
-        background->button = new QPushButton(grid->parentWidget());
-        background->button->setMinimumWidth(110);
-        setColourButton(background->button, colourFromString(background->value, QColor(Qt::white)));
-        connect(background->button, &QPushButton::clicked, this, [this, background]() { chooseColour(background); });
-        grid->addWidget(background->button, row, 2);
-
-        QLabel *fgLabel = new QLabel(L(QStringLiteral("Text")), grid->parentWidget());
-        grid->addWidget(fgLabel, row, 3);
-        foreground->title = label + QStringLiteral(" — ") + QStringLiteral("Text");
-        foreground->value = colourName(colourFromString(foregroundValue, QColor(Qt::black)), foregroundValue);
-        foreground->button = new QPushButton(grid->parentWidget());
-        foreground->button->setMinimumWidth(110);
-        setColourButton(foreground->button, colourFromString(foreground->value, QColor(Qt::black)));
-        connect(foreground->button, &QPushButton::clicked, this, [this, foreground]() { chooseColour(foreground); });
-        grid->addWidget(foreground->button, row, 4);
     };
+    addCaption(0, L(QStringLiteral("My call in message")));
+    addColour(0, 3, L(QStringLiteral("Text")), L(QStringLiteral("My call in message")),
+              &m_colourMyCallFg, m_initialSettings.ftHighlightMyCallForeground);
+    addCaption(1, L(QStringLiteral("CQ and QSO end (RR73/73)")));
+    addColour(1, 3, L(QStringLiteral("Text")), L(QStringLiteral("CQ and QSO end (RR73/73)")),
+              &m_colourCqFg, m_initialSettings.ftHighlightCqForeground);
+    addCaption(2, L(QStringLiteral("Other traffic")));
+    addColour(2, 3, L(QStringLiteral("Text")), L(QStringLiteral("Other traffic")),
+              &m_colourStandardFg, m_initialSettings.ftHighlightStandardForeground);
+    addCaption(3, L(QStringLiteral("Local TX row")));
+    addColour(3, 1, L(QStringLiteral("Background")), L(QStringLiteral("Local TX row")),
+              &m_colourTxBg, m_initialSettings.ftHighlightTxBackground);
+    addColour(3, 3, L(QStringLiteral("Text")), L(QStringLiteral("Local TX row")),
+              &m_colourTxFg, m_initialSettings.ftHighlightTxForeground);
 
-    addRow(0, QStringLiteral("My call in message"),
-           &m_colourMyCallBg, m_initialSettings.ftHighlightMyCallBackground,
-           &m_colourMyCallFg, m_initialSettings.ftHighlightMyCallForeground);
-    addRow(1, QStringLiteral("CQ message"),
-           &m_colourCqBg, m_initialSettings.ftHighlightCqBackground,
-           &m_colourCqFg, m_initialSettings.ftHighlightCqForeground);
-    addRow(2, QStringLiteral("Worked before"),
-           &m_colourWorkedBg, m_initialSettings.ftHighlightWorkedBackground,
-           &m_colourWorkedFg, m_initialSettings.ftHighlightWorkedForeground);
-    addRow(3, QStringLiteral("Local TX row"),
-           &m_colourTxBg, m_initialSettings.ftHighlightTxBackground,
-           &m_colourTxFg, m_initialSettings.ftHighlightTxForeground);
+    const QString backgroundText = L(QStringLiteral("Background"));
+    auto addNovelty = [grid, addColour, backgroundText](int row, QCheckBox **check, bool checked, const QString &label,
+                                              ColourButton *any, const QString &anyValue,
+                                              ColourButton *band, const QString &bandValue, const QString &bandLabel) {
+        *check = new QCheckBox(label, grid->parentWidget());
+        (*check)->setChecked(checked);
+        grid->addWidget(*check, row, 0);
+        addColour(row, 1, backgroundText, label, any, anyValue);
+        addColour(row, 3, bandLabel, label, band, bandValue);
+    };
+    addNovelty(4, &m_chkHighlightNewDxcc, m_initialSettings.ftHighlightNewDxcc, L(QStringLiteral("New DXCC")),
+               &m_colourNewDxccBg, m_initialSettings.ftHighlightNewDxccBackground,
+               &m_colourNewDxccBandBg, m_initialSettings.ftHighlightNewDxccBandBackground, L(QStringLiteral("on this band")));
+    addNovelty(5, &m_chkHighlightNewGrid, m_initialSettings.ftHighlightNewGrid, L(QStringLiteral("New grid square")),
+               &m_colourNewGridBg, m_initialSettings.ftHighlightNewGridBackground,
+               &m_colourNewGridBandBg, m_initialSettings.ftHighlightNewGridBandBackground, L(QStringLiteral("on this band")));
+    addNovelty(6, &m_chkHighlightNewCall, m_initialSettings.ftHighlightNewCall, L(QStringLiteral("New call")),
+               &m_colourNewCallBg, m_initialSettings.ftHighlightNewCallBackground,
+               &m_colourNewCallBandBg, m_initialSettings.ftHighlightNewCallBandBackground, L(QStringLiteral("on this band/mode")));
+    QLabel *schemeNote = new QLabel(L(QStringLiteral("Text colour = kind of message, background = new for the log. Worked stations are struck through. Other traffic shows the colour only in the call column.")), group);
+    schemeNote->setWordWrap(true);
+    grid->addWidget(schemeNote, 7, 0, 1, 5);
 
     m_chkHighlightNewCountry = new QCheckBox(L(QStringLiteral("Highlight new DXCC countries with a red row outline")), group);
     m_chkHighlightNewCountry->setChecked(m_initialSettings.ftHighlightNewCountryEnabled);
-    grid->addWidget(m_chkHighlightNewCountry, 4, 0, 1, 5);
+    grid->addWidget(m_chkHighlightNewCountry, 8, 0, 1, 5);
 
     m_chkWatchListIcon = new QCheckBox(L(QStringLiteral("Show alert icon for calls in watch list")), group);
     m_chkWatchListIcon->setChecked(m_initialSettings.ftWatchListIconEnabled);
-    grid->addWidget(m_chkWatchListIcon, 5, 0, 1, 5);
+    grid->addWidget(m_chkWatchListIcon, 9, 0, 1, 5);
 
     QLabel *blackLabel = new QLabel(L(QStringLiteral("Blacklist calls")), group);
     m_editFtBlacklist = new QPlainTextEdit(group);
     m_editFtBlacklist->setPlainText(callsToText(m_initialSettings.ftBlacklistCalls));
-    m_editFtBlacklist->setPlaceholderText(L(QStringLiteral("one callsign per line; hidden from FT traffic and ignored by Evil Auto QSO")));
+    m_editFtBlacklist->setPlaceholderText(L(QStringLiteral("one callsign per line; hidden from FT traffic and ignored by Auto QSO")));
     m_editFtBlacklist->setMinimumHeight(78);
     m_editFtBlacklist->setMaximumHeight(96);
-    grid->addWidget(blackLabel, 6, 0);
-    grid->addWidget(m_editFtBlacklist, 6, 1, 1, 4);
+    grid->addWidget(blackLabel, 10, 0);
+    grid->addWidget(m_editFtBlacklist, 10, 1, 1, 4);
 
     QLabel *watchLabel = new QLabel(L(QStringLiteral("Watch-list calls")), group);
     m_editFtWatchList = new QPlainTextEdit(group);
@@ -1630,10 +1642,10 @@ QWidget *AppSettingsDialog::makeFtColourEditor()
     m_editFtWatchList->setPlaceholderText(L(QStringLiteral("one callsign per line; rows get an alert icon")));
     m_editFtWatchList->setMinimumHeight(78);
     m_editFtWatchList->setMaximumHeight(96);
-    grid->addWidget(watchLabel, 7, 0);
-    grid->addWidget(m_editFtWatchList, 7, 1, 1, 4);
+    grid->addWidget(watchLabel, 11, 0);
+    grid->addWidget(m_editFtWatchList, 11, 1, 1, 4);
 
-    QLabel *autoPolicyLabel = new QLabel(L(QStringLiteral("Evil Auto QSO duplicate policy")), group);
+    QLabel *autoPolicyLabel = new QLabel(L(QStringLiteral("Auto QSO duplicate policy")), group);
     m_cmbAutoQsoDuplicatePolicy = new QComboBox(group);
     m_cmbAutoQsoDuplicatePolicy->addItem(L(QStringLiteral("Answer all non-blacklisted CQs")), QStringLiteral("none"));
     m_cmbAutoQsoDuplicatePolicy->addItem(L(QStringLiteral("Exclude calls already in log")), QStringLiteral("never_worked"));
@@ -1644,16 +1656,16 @@ QWidget *AppSettingsDialog::makeFtColourEditor()
     m_spinAutoQsoRecentHours->setRange(1, 168);
     m_spinAutoQsoRecentHours->setSuffix(QStringLiteral(" h"));
     m_spinAutoQsoRecentHours->setValue(qBound(1, m_initialSettings.ftAutoQsoRecentHours, 168));
-    grid->addWidget(autoPolicyLabel, 8, 0);
-    grid->addWidget(m_cmbAutoQsoDuplicatePolicy, 8, 1, 1, 3);
-    grid->addWidget(m_spinAutoQsoRecentHours, 8, 4);
+    grid->addWidget(autoPolicyLabel, 12, 0);
+    grid->addWidget(m_cmbAutoQsoDuplicatePolicy, 12, 1, 1, 3);
+    grid->addWidget(m_spinAutoQsoRecentHours, 12, 4);
 
     QLabel *cqRepeatLabel = new QLabel(L(QStringLiteral("CQ retry count")), group);
     m_spinCqRepeatCount = new QSpinBox(group);
     m_spinCqRepeatCount->setRange(1, 99);
     m_spinCqRepeatCount->setValue(qBound(1, m_initialSettings.ft8CqRepeatCount, 99));
-    grid->addWidget(cqRepeatLabel, 9, 0);
-    grid->addWidget(m_spinCqRepeatCount, 9, 1);
+    grid->addWidget(cqRepeatLabel, 13, 0);
+    grid->addWidget(m_spinCqRepeatCount, 13, 1);
 
     // Waterfall speed in FT8/FT4: one row averages the spectra of this time
     // (JTDX ~290 ms). Shorter = faster scrolling, less history on screen.
@@ -1667,32 +1679,54 @@ QWidget *AppSettingsDialog::makeFtColourEditor()
     const QString rowTip = L(QStringLiteral("Waterfall speed in FT8: each row averages the spectrum over this time. Less is faster, more shows a longer history and calmer noise. FT4 uses half of it. JTDX: about 290 ms."));
     rowLabel->setToolTip(rowTip);
     m_spinFtWaterfallRowMs->setToolTip(rowTip);
-    grid->addWidget(rowLabel, 10, 0);
-    grid->addWidget(m_spinFtWaterfallRowMs, 10, 1);
+    grid->addWidget(rowLabel, 14, 0);
+    grid->addWidget(m_spinFtWaterfallRowMs, 14, 1);
+
+    // CQ calls on the waterfall (as in JTDX 3box): seconds shown, 0 = off.
+    QLabel *cqLabel = new QLabel(L(QStringLiteral("CQ calls on the waterfall")), group);
+    m_spinFtWaterfallCqSeconds = new QSpinBox(group);
+    m_spinFtWaterfallCqSeconds->setObjectName(QStringLiteral("spinFtWaterfallCqSeconds"));
+    m_spinFtWaterfallCqSeconds->setRange(0, 600);
+    m_spinFtWaterfallCqSeconds->setSingleStep(5);
+    m_spinFtWaterfallCqSeconds->setSuffix(QStringLiteral(" s"));
+    m_spinFtWaterfallCqSeconds->setSpecialValueText(L(QStringLiteral("Off (no CQ calls)")));
+    m_spinFtWaterfallCqSeconds->setValue(qBound(0, m_initialSettings.ftWaterfallCqSeconds, 600));
+    const QString cqTip = L(QStringLiteral("Shows the callsigns of stations calling CQ at the bottom of the waterfall, over their signal, for this many seconds; they fade out towards the end. 0 switches it off."));
+    cqLabel->setToolTip(cqTip);
+    m_spinFtWaterfallCqSeconds->setToolTip(cqTip);
+    grid->addWidget(cqLabel, 15, 0);
+    grid->addWidget(m_spinFtWaterfallCqSeconds, 15, 1);
 
 
-    QPushButton *reset = new QPushButton(L(QStringLiteral("Reset highlight colours")), group);
+    QPushButton *reset = new QPushButton(L(QStringLiteral("Default colours")), group);
     connect(reset, &QPushButton::clicked, this, [this]() {
         const AppSettings defaults;
-        m_colourMyCallBg.value = defaults.ftHighlightMyCallBackground;
         m_colourMyCallFg.value = defaults.ftHighlightMyCallForeground;
-        m_colourCqBg.value = defaults.ftHighlightCqBackground;
         m_colourCqFg.value = defaults.ftHighlightCqForeground;
-        m_colourWorkedBg.value = defaults.ftHighlightWorkedBackground;
-        m_colourWorkedFg.value = defaults.ftHighlightWorkedForeground;
+        m_colourStandardFg.value = defaults.ftHighlightStandardForeground;
         m_colourTxBg.value = defaults.ftHighlightTxBackground;
         m_colourTxFg.value = defaults.ftHighlightTxForeground;
-        const QList<ColourButton *> entries = {&m_colourMyCallBg, &m_colourMyCallFg,
-                                               &m_colourCqBg, &m_colourCqFg,
-                                               &m_colourWorkedBg, &m_colourWorkedFg,
-                                               &m_colourTxBg, &m_colourTxFg};
+        m_colourNewDxccBg.value = defaults.ftHighlightNewDxccBackground;
+        m_colourNewDxccBandBg.value = defaults.ftHighlightNewDxccBandBackground;
+        m_colourNewGridBg.value = defaults.ftHighlightNewGridBackground;
+        m_colourNewGridBandBg.value = defaults.ftHighlightNewGridBandBackground;
+        m_colourNewCallBg.value = defaults.ftHighlightNewCallBackground;
+        m_colourNewCallBandBg.value = defaults.ftHighlightNewCallBandBackground;
+        m_chkHighlightNewDxcc->setChecked(defaults.ftHighlightNewDxcc);
+        m_chkHighlightNewGrid->setChecked(defaults.ftHighlightNewGrid);
+        m_chkHighlightNewCall->setChecked(defaults.ftHighlightNewCall);
+        const QList<ColourButton *> entries = {&m_colourMyCallFg, &m_colourCqFg, &m_colourStandardFg,
+                                               &m_colourTxBg, &m_colourTxFg,
+                                               &m_colourNewDxccBg, &m_colourNewDxccBandBg,
+                                               &m_colourNewGridBg, &m_colourNewGridBandBg,
+                                               &m_colourNewCallBg, &m_colourNewCallBandBg};
         for (ColourButton *entry : entries) {
             if (entry != nullptr && entry->button != nullptr) {
                 setColourButton(entry->button, colourFromString(entry->value, QColor(Qt::white)));
             }
         }
     });
-    grid->addWidget(reset, 11, 0, 1, 5, Qt::AlignLeft);
+    grid->addWidget(reset, 16, 0, 1, 5, Qt::AlignLeft);
     grid->setColumnStretch(0, 1);
     grid->setColumnStretch(5, 2);
     return group;
@@ -2554,14 +2588,20 @@ void AppSettingsDialog::collectSettings()
         merged.schedulerQsyPlanJson = BandSchedulerDialog::serializeEntries(m_resultSchedulerEntries);
     }
 
-    merged.ftHighlightMyCallBackground = m_colourMyCallBg.value;
     merged.ftHighlightMyCallForeground = m_colourMyCallFg.value;
-    merged.ftHighlightCqBackground = m_colourCqBg.value;
     merged.ftHighlightCqForeground = m_colourCqFg.value;
-    merged.ftHighlightWorkedBackground = m_colourWorkedBg.value;
-    merged.ftHighlightWorkedForeground = m_colourWorkedFg.value;
+    merged.ftHighlightStandardForeground = m_colourStandardFg.value;
     merged.ftHighlightTxBackground = m_colourTxBg.value;
     merged.ftHighlightTxForeground = m_colourTxFg.value;
+    merged.ftHighlightNewDxccBackground = m_colourNewDxccBg.value;
+    merged.ftHighlightNewDxccBandBackground = m_colourNewDxccBandBg.value;
+    merged.ftHighlightNewGridBackground = m_colourNewGridBg.value;
+    merged.ftHighlightNewGridBandBackground = m_colourNewGridBandBg.value;
+    merged.ftHighlightNewCallBackground = m_colourNewCallBg.value;
+    merged.ftHighlightNewCallBandBackground = m_colourNewCallBandBg.value;
+    if (m_chkHighlightNewDxcc != nullptr) merged.ftHighlightNewDxcc = m_chkHighlightNewDxcc->isChecked();
+    if (m_chkHighlightNewGrid != nullptr) merged.ftHighlightNewGrid = m_chkHighlightNewGrid->isChecked();
+    if (m_chkHighlightNewCall != nullptr) merged.ftHighlightNewCall = m_chkHighlightNewCall->isChecked();
     merged.ftHighlightNewCountryEnabled = (m_chkHighlightNewCountry != nullptr) ? m_chkHighlightNewCountry->isChecked() : merged.ftHighlightNewCountryEnabled;
     merged.ftWatchListIconEnabled = (m_chkWatchListIcon != nullptr) ? m_chkWatchListIcon->isChecked() : merged.ftWatchListIconEnabled;
     if (m_editFtBlacklist != nullptr) {
@@ -2581,6 +2621,9 @@ void AppSettingsDialog::collectSettings()
     }
     if (m_spinFtWaterfallRowMs != nullptr) {
         merged.ftWaterfallRowMs = m_spinFtWaterfallRowMs->value();
+    }
+    if (m_spinFtWaterfallCqSeconds != nullptr) {
+        merged.ftWaterfallCqSeconds = m_spinFtWaterfallCqSeconds->value();
     }
 
     if (m_chkRotatorEnabled != nullptr) merged.rotatorEnabled = m_chkRotatorEnabled->isChecked();

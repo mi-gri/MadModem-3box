@@ -15,6 +15,7 @@
  **************************************************************************/
 
 #include "SoundCardCalibrationDialog.h"
+#include "audio/AudioDeviceCache.h"
 #include "../utils/UiScale.h"
 #include "../utils/RuntimeI18n.h"
 
@@ -201,7 +202,7 @@ bool makeInt16MonoFormat(const QAudioDevice &device,
 QAudioDeviceInfo selectInputDevice(const QString &deviceName)
 {
     QAudioDeviceInfo selected = QAudioDeviceInfo::defaultInputDevice();
-    const QList<QAudioDeviceInfo> devices = QAudioDeviceInfo::availableDevices(QAudio::AudioInput);
+    const QList<QAudioDeviceInfo> devices = AudioDeviceCache::devices(QAudio::AudioInput);
     for (const QAudioDeviceInfo &device : devices) {
         if (device.deviceName() == deviceName) {
             selected = device;
@@ -214,7 +215,7 @@ QAudioDeviceInfo selectInputDevice(const QString &deviceName)
 QAudioDeviceInfo selectOutputDevice(const QString &deviceName)
 {
     QAudioDeviceInfo selected = QAudioDeviceInfo::defaultOutputDevice();
-    const QList<QAudioDeviceInfo> devices = QAudioDeviceInfo::availableDevices(QAudio::AudioOutput);
+    const QList<QAudioDeviceInfo> devices = AudioDeviceCache::devices(QAudio::AudioOutput);
     for (const QAudioDeviceInfo &device : devices) {
         if (device.deviceName() == deviceName) {
             selected = device;

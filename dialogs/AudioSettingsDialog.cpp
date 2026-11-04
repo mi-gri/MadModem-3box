@@ -1,4 +1,5 @@
 #include "AudioSettingsDialog.h"
+#include "audio/AudioDeviceCache.h"
 #include "ui_AudioSettingsDialog.h"
 #include "../utils/UiScale.h"
 
@@ -61,8 +62,10 @@ AudioSettingsDialog::AudioSettingsDialog(const AppSettings &initialSettings,
     resize(860, 240);
     setMinimumSize(760, 220);
 
-    connect(ui->btnRefresh, &QPushButton::clicked,
-            this, &AudioSettingsDialog::refreshDevices);
+    connect(ui->btnRefresh, &QPushButton::clicked, this, [this]() {
+        m_refreshAudioDevices = true;   // the operator asked: read the devices again
+        refreshDevices();
+    });
 
     connect(ui->buttonBox, &QDialogButtonBox::accepted,
             this, &AudioSettingsDialog::accept);
@@ -227,8 +230,7 @@ void AudioSettingsDialog::refreshDevices()
 
 #else
 
-    const QList<QAudioDeviceInfo> inputDevices =
-        QAudioDeviceInfo::availableDevices(QAudio::AudioInput);
+    const QList<QAudioDeviceInfo> inputDevices = AudioDeviceCache::devices(QAudio::AudioInput, m_refreshAudioDevices);
 
     for (const QAudioDeviceInfo &device : inputDevices) {
         const QString backendName = device.deviceName();
@@ -238,8 +240,8 @@ void AudioSettingsDialog::refreshDevices()
                             backendName);
     }
 
-    const QList<QAudioDeviceInfo> outputDevices =
-        QAudioDeviceInfo::availableDevices(QAudio::AudioOutput);
+    const QList<QAudioDeviceInfo> outputDevices = AudioDeviceCache::devices(QAudio::AudioOutput, m_refreshAudioDevices);
+    m_refreshAudioDevices = false;
 
     for (const QAudioDeviceInfo &device : outputDevices) {
         const QString backendName = device.deviceName();

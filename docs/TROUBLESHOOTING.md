@@ -3,7 +3,7 @@
 Include the complete window title or `MadModem --build-info`, operating system,
 mode, radio/audio configuration and the time of the problem in a report.
 
-## Evil Auto QSO traces
+## Auto QSO traces
 
 Open **Runtime log** to inspect or export the ordinary text log. Automation traces
 start with `FT automation:` and contain one JSON object per line. They remain
@@ -16,7 +16,7 @@ the complete session log is preferable for longer operation.
 
 | Action | Meaning |
 | --- | --- |
-| `control` | Evil unlock and Auto QSO enable/disable with policy/limits |
+| `control` | Auto QSO enable/disable with policy/limits |
 | `candidate.enqueue`, `candidate.refresh`, `candidate.select` | CQ queue, ranking and selected target |
 | `candidate.reject`, `candidate.remove` | Blacklist, duplicate/cooldown, ownership, expiry or capacity reason |
 | `candidate.wait`, `candidate.lookup` | Logbook query, directed traffic or fresh CQ required |

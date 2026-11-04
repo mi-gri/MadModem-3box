@@ -21,10 +21,10 @@ int main(int argc,char **argv){
  MainWindow w;w.m_settings.pttMethod="none";
  // Model an already active RX capture; no test may open a physical device.
  w.m_audioEngine->m_running.store(true);
- for(const QString mode:{QString("FT8"),QString("FT4")})for(bool evil:{false,true}){
+ for(const QString mode:{QString("FT8"),QString("FT4")})for(bool autoMode:{false,true}){
   w.ui->cmbMode->setCurrentText(mode);w.m_settings.textMyCallsign="IZ6NNH";w.m_settings.textMyLocator="JN63";
-  w.stopFt8Sequencer("test setup");w.m_ft8OperatorStopLatched=false;w.m_ft8TxStartFailureCount=0;w.m_ft8EvilModeUnlocked=evil;
-  {QSignalBlocker b(w.m_chkFt8FullAutoQso);w.m_chkFt8FullAutoQso->setChecked(evil);}
+  w.stopFt8Sequencer("test setup");w.m_ft8OperatorStopLatched=false;w.m_ft8TxStartFailureCount=0;w.m_ft8AutoModeEnabled=autoMode;
+  {QSignalBlocker b(w.m_chkFt8FullAutoQso);w.m_chkFt8FullAutoQso->setChecked(autoMode);}
   const auto profile=Ft8Mode::profileForMode(mode);const auto boundary=QDateTime::currentMSecsSinceEpoch()/profile.slotMs*profile.slotMs;
   w.m_ftSession.startQso("LZ2KSQ","KN23",1033);w.m_ftSession.state=FtQsoSequencer::State::SendingLocator;
   w.m_ftSession.beginRetry("LZ2KSQ IZ6NNH JN63","SEQ",3);
@@ -55,7 +55,7 @@ int main(int argc,char **argv){
     require(w.m_ft8TxStartFailureCount==failure,"start-failure budget was reset by automatic rearm");
    }else{
     require(!w.m_ftSession.qsoActive&&!w.m_ft8PendingTxArmed&&w.m_ft8OperatorStopLatched,"repeated backend failures looped indefinitely");
-    require(!w.m_chkFt8FullAutoQso->isChecked(),"Evil automation survived the backend failure limit");
+    require(!w.m_chkFt8FullAutoQso->isChecked(),"Auto mode survived the backend failure limit");
    }
   }
   w.m_ft8OperatorStopLatched=false;w.m_ft8TxStartFailureCount=0;
@@ -70,7 +70,7 @@ int main(int argc,char **argv){
   // STOP between an error and the queued replacement must remain authoritative.
   w.m_ft8OperatorStopLatched=false;w.m_ft8TxStartFailureCount=0;w.m_pendingFt8TxPlan.message="LZ2KSQ IZ6NNH 73";w.m_pendingFt8TxPlan.tag="SEQ";w.m_pendingFt8TxPlan.slotBoundaryUtcMs=boundary;
   w.deferPendingFtTx("test backend delay");w.stopFt8Shell();pump();require(!w.m_ft8PendingTxArmed,"STOP was undone by failed-start recovery");
-  std::cout<<mode.toStdString()<<" "<<(evil?"Evil":"normal")<<": failed PCM retry, stale stop, attempt count, bounded failure and STOP PASS\n";
+  std::cout<<mode.toStdString()<<" "<<(autoMode?"Auto mode":"normal")<<": failed PCM retry, stale stop, attempt count, bounded failure and STOP PASS\n";
  }
  w.m_audioEngine->m_running.store(false);w.m_rxRunning=false;w.m_ft8OperatorStopLatched=true;
 }

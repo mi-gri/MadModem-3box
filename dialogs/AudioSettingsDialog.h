@@ -94,6 +94,7 @@ private:
     Ui::AudioSettingsDialog *ui = nullptr;
     AppSettings m_settings;
     std::function<QString(const QString &)> m_textTranslator;
+    bool m_refreshAudioDevices = false;   // next refreshDevices() reads the devices again
 };
 
 #endif // AUDIOSETTINGSDIALOG_H

@@ -22,8 +22,8 @@ int main(int argc,char**argv){
   publish(d,"boundary");require(w.m_tableFt8Rx->rowCount()==before+1,"canonical result duplicated preview");require(w.m_ft8PendingTxArmed&&w.m_pendingFt8TxPlan.message=="LZ2KSQ IZ6NNH R-15","canonical report did not arm response");
   // A previously displayed non-direct result must still reach QRM handling.
   w.m_spinFt8TxFreq->setValue(1033);d.message="G0JEI LZ2KSQ -03";d.frequencyHz=1033;publish(d,"boundary presentation");require(w.m_ftSession.qsoActive,"preview ended QSO");publish(d,"boundary");require(!w.m_ftSession.qsoActive,"canonical QRM result was lost to visual deduplication");
-  // Idle Evil/Auto CQ must not select a caller from partial display batches.
-  w.m_ft8OperatorStopLatched=false;w.m_ft8EvilModeUnlocked=true;w.m_chkFt8FullAutoQso->setChecked(true);d.message="CQ G0JEI IO93";publish(d,"boundary presentation");require(!w.m_ft8PendingTxArmed&&!w.m_ftSession.qsoActive&&w.m_ft8FullAutoCqCandidates.isEmpty(),"preview triggered Auto CQ");w.m_chkFt8FullAutoQso->setChecked(false);w.stopFt8Sequencer("probe complete");
+  // Idle Auto QSO must not select a caller from partial display batches.
+  w.m_ft8OperatorStopLatched=false;w.m_ft8AutoModeEnabled=true;w.m_chkFt8FullAutoQso->setChecked(true);d.message="CQ G0JEI IO93";publish(d,"boundary presentation");require(!w.m_ft8PendingTxArmed&&!w.m_ftSession.qsoActive&&w.m_ft8FullAutoCqCandidates.isEmpty(),"preview triggered Auto CQ");w.m_chkFt8FullAutoQso->setChecked(false);w.stopFt8Sequencer("probe complete");
   // Dense slots must also deduplicate early rows outside the last 80.
   w.m_tableFt8Rx->setRowCount(0);w.m_ft8OperatorStopLatched=true;
   for(const QString phase:{QString("boundary presentation"),QString("boundary")}) {

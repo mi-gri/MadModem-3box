@@ -1,4 +1,4 @@
-// Exercise operator takeover and the persistent Evil CQ queue without a radio.
+// Exercise operator takeover and the persistent Auto QSO CQ queue without a radio.
 #include "mainwindow.h"
 #include "runtime/SessionDiagnostics.h"
 #include "utils/ApplicationIdentity.h"
@@ -35,7 +35,7 @@ int main(int argc,char **argv){
  }
  QTemporaryDir audit;require(audit.isValid(),"audit temporary directory");
  // Ordinary runtime traces must work with complete session logging disabled.
- SessionDiagnostics::instance().stop();w.m_ft8EvilModeUnlocked=true;
+ SessionDiagnostics::instance().stop();w.m_ft8AutoModeEnabled=true;
  w.traceFtAutomation("control","runtime_only_probe");
  require(w.m_runtimeLogBuffer.join('\n').contains("runtime_only_probe"),"runtime trace missing without full logging");
  require(SessionDiagnostics::instance().start(audit.path()),"start compressed automation log");
@@ -46,7 +46,7 @@ int main(int argc,char **argv){
  for(const QString mode:{QString("FT8"),QString("FT4")}){
   w.ui->cmbMode->setCurrentText(mode);w.m_settings.textMyCallsign="IZ6NNH";w.m_settings.textMyLocator="JN63";
   w.m_ft8OperatorStopLatched=true;w.stopFt8Sequencer("operator queue test setup");w.m_ft8OperatorStopLatched=false;
-  w.m_ft8EvilModeUnlocked=true;w.m_settings.ftAutoQsoDuplicatePolicy="none";
+  w.m_ft8AutoModeEnabled=true;w.m_settings.ftAutoQsoDuplicatePolicy="none";
   {QSignalBlocker b(w.m_chkFt8FullAutoQso);w.m_chkFt8FullAutoQso->setChecked(true);}
   w.handleFt8FullAutoQsoToggled(true);
   {QSignalBlocker b(w.m_chkFt8CallerQueue);w.m_chkFt8CallerQueue->setChecked(false);}
@@ -82,7 +82,7 @@ int main(int argc,char **argv){
   w.stopFt8Sequencer("simulate exhausted attempts");
   require(w.m_ft8FullAutoCqCandidates.size()==2,"no-response cleanup discarded the waiting CQ queue");
   w.processFt8FullAutoCqCandidates();
-  require(w.m_ftSession.dxCall=="JA1ABC"&&w.m_ft8PendingTxArmed,"idle Evil did not start the highest-priority queued CQ");
+  require(w.m_ftSession.dxCall=="JA1ABC"&&w.m_ft8PendingTxArmed,"idle Auto QSO did not start the highest-priority queued CQ");
   require(w.m_ft8FullAutoCqCandidates.size()==1&&w.m_ft8FullAutoCqCandidates.first().call=="M0ABC","dispatch discarded other queued targets");
   w.m_ftSession.state=FtQsoSequencer::State::WaitingReport;
   auto reply=b.first;reply.message="IZ6NNH JA1ABC -10";reply.slotStartUtcMs=boundary;
@@ -140,7 +140,7 @@ int main(int argc,char **argv){
  QSet<QString> actions,reasons,modes;int events=0;
  for(const auto &line:readGzipLog(auditPath).split('\n')){
   const auto o=QJsonDocument::fromJson(line).object();if(o.value("event").toString()!="ft.automation")continue;
-  require(o.value("version").toString()==QStringLiteral(MADMODEM_VERSION_STRING)&&o.value("build").toString()==QStringLiteral(MADMODEM_BUILD_NUMBER),"trace lost compiled identity");
+  require(o.value("version").toString()==QStringLiteral(MADMODEM_VERSION_STRING)&&o.value("build").toString()==QString::fromLatin1(MadModemBuild::number()),"trace lost compiled identity");
   if(o.value("action").toString()=="tx.arm")require(!o.value("tx_plan_id").toString().isEmpty()&&o.value("tx_plan_id").toString()!="[redacted]","TX plan correlation must survive secret redaction");
   ++events;actions.insert(o.value("action").toString());reasons.insert(o.value("reason").toString());modes.insert(o.value("mode").toString());
   require(!o.value("trace_id").toString().isEmpty()&&o.contains("qso_id")&&o.contains("tx_slot_utc_ms")&&o.contains("state"),"correlation/context absent from structured automation event");

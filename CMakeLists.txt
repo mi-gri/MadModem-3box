@@ -253,8 +253,25 @@ find_package(ZLIB REQUIRED)
 # Live CW architecture: exact-tone carrier discrimination, robust timing-family
 # estimation and bounded probabilistic Morse sequence decoding are independent
 # components. No legacy Bayesian/geometric-rescue implementation is linked.
+# Build number for the title bar and logs: the distribution number when set,
+# otherwise a local counter that goes up with every build after a source change.
+set(MADMODEM_BUILD_NUMBER_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/MadModemBuildNumber.cpp")
+add_custom_target(madmodem_build_counter ALL
+    COMMAND ${CMAKE_COMMAND}
+        "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+        "-DOUTPUT=${MADMODEM_BUILD_NUMBER_SOURCE}"
+        "-DFIXED_NUMBER=${MADMODEM_BUILD_NUMBER}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/MadModemBuildCounter.cmake"
+    BYPRODUCTS "${MADMODEM_BUILD_NUMBER_SOURCE}"
+    COMMENT "MadModem build number"
+    VERBATIM)
+add_library(madmodem_build_number STATIC "${MADMODEM_BUILD_NUMBER_SOURCE}" utils/BuildNumber.h)
+target_include_directories(madmodem_build_number PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+add_dependencies(madmodem_build_number madmodem_build_counter)
+
 add_library(madmodem_diagnostics STATIC runtime/SessionDiagnostics.cpp runtime/GzipLogWriter.h)
-target_link_libraries(madmodem_diagnostics PUBLIC ${QT}::Core Threads::Threads ZLIB::ZLIB)
+target_link_libraries(madmodem_diagnostics PUBLIC ${QT}::Core Threads::Threads ZLIB::ZLIB madmodem_build_number)
 target_include_directories(madmodem_diagnostics PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 add_library(madmodem_cwskimmer STATIC
@@ -424,6 +441,8 @@ add_executable(MadModem
     mainwindow.ui
     resources.qrc
     audio/AudioEngine.cpp
+    audio/AudioDeviceCache.cpp
+    audio/AudioDeviceCache.h
     audio/BoundedAudioDispatcher.cpp
     audio/RxAudioRecorder.h
     audio/RxAudioRecorder.cpp
@@ -439,6 +458,8 @@ add_executable(MadModem
     audio/AudioBlock.h
     widgets/WaterfallWidget.h
     widgets/CqSpots.h
+    modems/ft8/FtDecodeFilter.h
+    modems/ft8/FtDecodeColours.h
     widgets/SkimmerOverlay.cpp widgets/SkimmerOverlay.h
     widgets/WaterfallWidget.cpp
     widgets/RttyScopeWidget.h
@@ -1238,9 +1259,10 @@ if(BUILD_TESTING)
     target_link_libraries(madmodem_receiver_filter_regression PRIVATE Qt${QT_VERSION_MAJOR}::Core)
     add_test(NAME madmodem_receiver_filter_regression COMMAND madmodem_receiver_filter_regression)
     add_executable(madmodem_waterfall_cq_regression
-        tests/WaterfallCqRegression.cpp dsp/WaterfallLeveler.cpp dsp/DspEngine.cpp widgets/CqSpots.h)
+        tests/WaterfallCqRegression.cpp dsp/WaterfallLeveler.cpp dsp/DspEngine.cpp widgets/CqSpots.h
+        modems/ft8/FtDecodeFilter.h modems/ft8/FtDecodeColours.h)
     target_include_directories(madmodem_waterfall_cq_regression PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(madmodem_waterfall_cq_regression PRIVATE Qt${QT_VERSION_MAJOR}::Core)
+    target_link_libraries(madmodem_waterfall_cq_regression PRIVATE Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Gui)
     add_test(NAME madmodem_waterfall_cq_regression COMMAND madmodem_waterfall_cq_regression)
 
     if(UNIX)

@@ -1,5 +1,6 @@
 #include "../runtime/SessionDiagnostics.h"
 #include "AudioEngine.h"
+#include "AudioDeviceCache.h"
 
 #include <QDateTime>
 #include <QDebug>
@@ -289,16 +290,8 @@ bool AudioEngine::startInput(const QString &deviceName, int requestedSampleRate)
     QAudioDeviceInfo selectedDevice = QAudioDeviceInfo::defaultInputDevice();
     bool exactDeviceMatch = false;
 
-    const QList<QAudioDeviceInfo> devices =
-        QAudioDeviceInfo::availableDevices(QAudio::AudioInput);
-
-    for (const QAudioDeviceInfo &device : devices) {
-        if (device.deviceName() == deviceName) {
-            selectedDevice = device;
-            exactDeviceMatch = true;
-            break;
-        }
-    }
+    const QList<QAudioDeviceInfo> devices = AudioDeviceCache::devices(QAudio::AudioInput);
+    exactDeviceMatch = AudioDeviceCache::find(QAudio::AudioInput, deviceName, &selectedDevice);
 
     const bool defaultRequested = deviceName.isEmpty() || deviceName == QStringLiteral("default");
     if (!defaultRequested && !exactDeviceMatch) {

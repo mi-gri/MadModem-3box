@@ -138,7 +138,7 @@ int main(int argc, char *argv[])
     }
 
     if (startupArguments.size() == 2 && startupArguments.at(1) == QStringLiteral("--build-info")) {
-        std::fprintf(stdout, "MadModem %s\nBuild %s\nCommit %s\n", MADMODEM_VERSION_STRING, MADMODEM_BUILD_NUMBER, MADMODEM_BUILD_COMMIT);
+        std::fprintf(stdout, "MadModem %s\nBuild %s\nCommit %s\n", MADMODEM_VERSION_STRING, MadModemBuild::number(), MADMODEM_BUILD_COMMIT);
         std::fflush(stdout);
         return 0;
     }
@@ -296,7 +296,7 @@ int main(int argc, char *argv[])
     struct DiagnosticShutdown { ~DiagnosticShutdown(){SessionDiagnostics::instance().stop();SessionDiagnostics::restoreQtCapture();} } diagnosticShutdown;
     if(bootSettings.sessionDiagnosticsEnabled) {
         auto &log=SessionDiagnostics::instance();log.start(bootSettings.sessionDiagnosticsFolder);log.settings(bootSettings);
-        log.record("build",{{"source",QStringLiteral(MADMODEM_SOURCE_REVISION)},{"build",QStringLiteral(MADMODEM_BUILD_NUMBER)},{"commit",QStringLiteral(MADMODEM_BUILD_COMMIT)}});
+        log.record("build",{{"source",QStringLiteral(MADMODEM_SOURCE_REVISION)},{"build",QString::fromLatin1(MadModemBuild::number())},{"commit",QStringLiteral(MADMODEM_BUILD_COMMIT)}});
     }
 
     HamlibController::initializeDiagnosticTrace();

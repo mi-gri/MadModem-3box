@@ -237,18 +237,33 @@ public:
     int ft8CqRepeatTimeoutMinutes = 5;
     QString ft8DecodeEngine = "mshv"; // v2.19: fixed MSHV-derived native pipeline
 
-    // FT4/FT8 decode table highlight colours. Stored as #RRGGBB strings so
+    // FT4/FT8 decode table colours, as in JTDX. Stored as #RRGGBB strings so
     // settings.mad remains human-editable and no GUI type leaks into AppSettings.
-    QString ftHighlightMyCallBackground = "#FFEBEB";
-    QString ftHighlightMyCallForeground = "#DC0000";
-    QString ftHighlightCqBackground = "#445C1C";
-    QString ftHighlightCqForeground = "#FFE478";
+    // Text colour = kind of message; background = what the station is new for.
+    // The values are the light JTDX set; a dark theme darkens them itself.
+    QString ftHighlightMyCallForeground = "#FF0000";
+    QString ftHighlightCqForeground = "#000000";      // CQ and QSO ends (RR73/73)
+    QString ftHighlightStandardForeground = "#707070"; // other traffic
+    QString ftHighlightNewDxccBackground = "#C000C0";
+    QString ftHighlightNewDxccBandBackground = "#D080D0";
+    QString ftHighlightNewGridBackground = "#00A0A0";
+    QString ftHighlightNewGridBandBackground = "#80D0D0";
+    QString ftHighlightNewCallBackground = "#A0A030";
+    QString ftHighlightNewCallBandBackground = "#E0E070";
+    QString ftHighlightTxBackground = "#EEEE00";
+    QString ftHighlightTxForeground = "#000000";
+    bool ftHighlightNewDxcc = true;          // JTDX defaults: DXCC and call on, grid off
+    bool ftHighlightNewGrid = false;
+    bool ftHighlightNewCall = true;
+
     int ftWaterfallRowMs = 200;             // FT8 waterfall: ms per row (FT4: half); JTDX ~290
     int ftWaterfallCqSeconds = 30;          // CQ calls on the waterfall: seconds shown, 0 = off (as in JTDX)
-    QString ftHighlightWorkedBackground = "#242424";
-    QString ftHighlightWorkedForeground = "#969696";
-    QString ftHighlightTxBackground = "#FFF75F";
-    QString ftHighlightTxForeground = "#000000";
+
+    // Filters of the FT decode table. Lines to my call and my own TX lines
+    // always stay visible.
+    bool ftDecodeFilterCqEnd = false;       // only CQ/RR73/73
+    bool ftDecodeFilterWorked = false;      // hide stations already worked ...
+    int ftDecodeFilterWorkedDays = 0;       // ... within this many days, 0 = all worked
 
     // FT4/FT8 operator filters and supervised automation policy.  Callsign
     // lists are normalized on use and stored as one call per line/list item.

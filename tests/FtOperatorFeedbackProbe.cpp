@@ -70,9 +70,9 @@ int main(int argc,char**argv){QApplication app(argc,argv);app.setApplicationName
          "CQ natural finish lost next arm or armed after exhaustion");
   }
   w.m_ft8OperatorStopLatched=true;w.stopFt8Sequencer("natural CQ test complete");
-  // CQ preference survives normal mode visibility (Evil Mode locked).
+  // CQ preference survives normal mode visibility (Auto mode off).
   {QSignalBlocker block(w.m_chkFt8CqRepeat);w.m_chkFt8CqRepeat->setChecked(true);}
-  w.m_settings.ft8CqRepeat=true;w.m_ft8EvilModeUnlocked=false;w.updateFt8EvilModeVisibility();check(w.m_settings.ft8CqRepeat,"Evil Mode erased CQ preference");
+  w.m_settings.ft8CqRepeat=true;w.m_ft8AutoModeEnabled=false;w.updateFt8AutoModeVisibility();check(w.m_settings.ft8CqRepeat,"Auto mode erased CQ preference");
   {QSignalBlocker block(w.m_chkFt8CqRepeat);w.m_chkFt8CqRepeat->setChecked(false);}
   w.m_settings.ft8CqRepeat=false;
   // Populate callers while a real QSO context owns the sequencer.

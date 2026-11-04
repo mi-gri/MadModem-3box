@@ -1,5 +1,6 @@
 #include "../runtime/SessionDiagnostics.h"
 #include "TxAudioEngine.h"
+#include "AudioDeviceCache.h"
 
 #include <QByteArray>
 #include <QIODevice>
@@ -123,16 +124,7 @@ bool TxAudioEngine::startOutput(const QString &deviceName, std::unique_ptr<TxMod
     QAudioDeviceInfo selectedDevice = QAudioDeviceInfo::defaultOutputDevice();
     bool exactDeviceMatch = false;
 
-    const QList<QAudioDeviceInfo> devices =
-        QAudioDeviceInfo::availableDevices(AudioNs::AudioOutput);
-
-    for (const QAudioDeviceInfo &device : devices) {
-        if (device.deviceName() == deviceName) {
-            selectedDevice = device;
-            exactDeviceMatch = true;
-            break;
-        }
-    }
+    exactDeviceMatch = AudioDeviceCache::find(QAudio::AudioOutput, deviceName, &selectedDevice);
 
     const bool defaultRequested = deviceName.isEmpty() || deviceName == QStringLiteral("default");
     if (!defaultRequested && !exactDeviceMatch) {

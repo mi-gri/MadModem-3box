@@ -23,7 +23,7 @@ int main(int argc,char **argv){
   decode("CQ G0JEI IO93",slot-period*4,1000);decode("CQ DL2LAU JO31",slot-period*4,1500);
   w.m_tableFt8Rx->clearSelection();for(int row:{0,1})w.m_tableFt8Rx->selectionModel()->select(w.m_tableFt8Rx->model()->index(row,0),QItemSelectionModel::Select|QItemSelectionModel::Rows);
   w.addSelectedFtCqsToWorkList();check(w.m_ftCqWorkList.entries.size()==2,"multi-selection did not add both CQs");check(!w.m_ft8PendingTxArmed&&!w.m_ftSession.qsoActive,"adding CQ armed TX");
-  check(!w.m_ft8EvilModeUnlocked,"fixture must not require Evil Mode");
+  check(!w.m_chkFt8FullAutoQso->isChecked(),"fixture must not require Auto QSO");
   w.m_btnFtCqRun->click();check(w.m_ftCqWorkList.running&&!w.m_ft8PendingTxArmed,"old CQ caused immediate call");
   w.m_ft8DecodeBatchPhase="boundary presentation";decode("CQ DL2LAU JO31",slot,1510);w.processFtCqWorkList();check(!w.m_ft8PendingTxArmed,"presentation preview authorized CQ list TX");w.m_ft8DecodeBatchPhase.clear();
   decode("F4JXL G0JEI -11",slot,1000);decode("CQ DL2LAU JO31",slot,1510);w.processFtCqWorkList();

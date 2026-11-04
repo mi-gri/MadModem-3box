@@ -169,14 +169,20 @@ private:
     QString m_rotatorConnectionMessage[3];
     bool m_initialGeometryApplied = false;
 
-    ColourButton m_colourMyCallBg;
     ColourButton m_colourMyCallFg;
-    ColourButton m_colourCqBg;
     ColourButton m_colourCqFg;
-    ColourButton m_colourWorkedBg;
-    ColourButton m_colourWorkedFg;
+    ColourButton m_colourStandardFg;
     ColourButton m_colourTxBg;
     ColourButton m_colourTxFg;
+    ColourButton m_colourNewDxccBg;
+    ColourButton m_colourNewDxccBandBg;
+    ColourButton m_colourNewGridBg;
+    ColourButton m_colourNewGridBandBg;
+    ColourButton m_colourNewCallBg;
+    ColourButton m_colourNewCallBandBg;
+    QCheckBox *m_chkHighlightNewDxcc = nullptr;
+    QCheckBox *m_chkHighlightNewGrid = nullptr;
+    QCheckBox *m_chkHighlightNewCall = nullptr;
 
     QCheckBox *m_chkHighlightNewCountry = nullptr;
     QCheckBox *m_chkWatchListIcon = nullptr;
@@ -196,6 +202,7 @@ private:
     QSpinBox *m_spinDecodeTableFontSize = nullptr;
     QSpinBox *m_spinDecodeTableRowHeight = nullptr;
     QSpinBox *m_spinFtWaterfallRowMs = nullptr;
+    QSpinBox *m_spinFtWaterfallCqSeconds = nullptr;
     QPlainTextEdit *m_editFtBlacklist = nullptr;
     QPlainTextEdit *m_editFtWatchList = nullptr;
     QComboBox *m_cmbAutoQsoDuplicatePolicy = nullptr;

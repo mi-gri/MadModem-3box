@@ -54,7 +54,7 @@ void MainWindow::showFtCqWorkList()
         m_ftCqDialog=new QDialog(this);m_ftCqDialog->setObjectName(QStringLiteral("ftCqWorkListDialog"));
         m_ftCqDialog->setWindowTitle(uiText("ft_cq_list_title","CQ stations to work"));m_ftCqDialog->resize(670,420);
         auto *layout=new QVBoxLayout(m_ftCqDialog);
-        auto *help=new QLabel(uiText("ft_cq_list_help", "Select CQ rows with Ctrl/Shift and add them. Start works the manual list in order after a fresh CQ. Evil Auto QSO also keeps a priority queue, with blacklist and duplicate checks. Direct callers have priority. Double-click selects a station immediately, interrupting the current TX if necessary. STOP stops TX and pauses automation."),m_ftCqDialog);
+        auto *help=new QLabel(uiText("ft_cq_list_help", "Select CQ rows with Ctrl/Shift and add them. Start works the manual list in order after a fresh CQ. Auto QSO also keeps a priority queue, with blacklist and duplicate checks. Direct callers have priority. Double-click selects a station immediately, interrupting the current TX if necessary. STOP stops TX and pauses automation."),m_ftCqDialog);
         help->setObjectName(QStringLiteral("ftCqHelp"));help->setWordWrap(true);layout->addWidget(help);
         m_ftCqTable=new QTableWidget(0,5,m_ftCqDialog);m_ftCqTable->setObjectName(QStringLiteral("ftCqWorkListTable"));
         m_ftCqTable->setHorizontalHeaderLabels({QStringLiteral("#"),uiText("callsign","Callsign"),uiText("locator","Locator"),uiText("frequency","Frequency"),uiText("status","Status")});

@@ -1,5 +1,6 @@
 #include "MadModemVersion.h"
 #include "MadModemBuildInfo.h"
+#include "../utils/BuildNumber.h"
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "SessionDiagnostics.h"
 #include "GzipLogWriter.h"
@@ -128,7 +129,7 @@ void SessionDiagnostics::run() {
         {"utc",QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},{"steady_ns",QString::number(AudioBlock::steadyNowNs())},
         {"pid",double(QCoreApplication::applicationPid())},{"application",QCoreApplication::applicationName()},
         {"version",QStringLiteral(MADMODEM_VERSION_STRING)},{"source_revision",QStringLiteral(MADMODEM_SOURCE_REVISION)},
-        {"build",QStringLiteral(MADMODEM_BUILD_NUMBER)},{"commit",QStringLiteral(MADMODEM_BUILD_COMMIT)},
+        {"build",QString::fromLatin1(MadModemBuild::number())},{"commit",QStringLiteral(MADMODEM_BUILD_COMMIT)},
         {"os",QSysInfo::prettyProductName()},{"architecture",QSysInfo::currentCpuArchitecture()},{"qt",QString::fromLatin1(qVersion())},
         {"logical_processors",QThread::idealThreadCount()},{"queue_limit_bytes",double(m_limit)}}))&&file.flush();
     {std::lock_guard<std::mutex> l(m_mutex);if(!opened)m_error="Cannot create diagnostic log: "+filePath+" ("+file.errorString()+")";else m_sequence=1;m_ready=true;}

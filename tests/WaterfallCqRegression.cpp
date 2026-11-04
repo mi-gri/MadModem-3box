@@ -3,6 +3,8 @@
 // placement rules of the CQ calls on the waterfall (widgets/CqSpots.h).
 #include "dsp/DspEngine.h"
 #include "widgets/CqSpots.h"
+#include "modems/ft8/FtDecodeFilter.h"
+#include "modems/ft8/FtDecodeColours.h"
 
 #include <QObject>
 
@@ -107,6 +109,69 @@ int main()
         check(spaced, "row times follow the capture clock, 0.3 s apart");
         check(!times.empty() && times.front() > 1700000000000LL && times.front() < 1700000001000LL,
               "row time is the window centre in capture UTC");
+    }
+
+    // --- decode filter "Only CQ/RR73/73" --------------------------------------
+    {
+        using FtDecodeFilter::passesCqEnd;
+        check(passesCqEnd("CQ DL1ABC JO62", "DO3BOX") && passesCqEnd("CQ DX K1ABC FN42", "DO3BOX"), "filter: CQ passes");
+        check(passesCqEnd("DL1ABC K1ABC RR73", "DO3BOX") && passesCqEnd("DL1ABC K1ABC 73", "DO3BOX"), "filter: RR73/73 pass");
+        check(!passesCqEnd("DL1ABC K1ABC -12", "DO3BOX") && !passesCqEnd("DL1ABC K1ABC R-07", "DO3BOX") &&
+              !passesCqEnd("DL1ABC K1ABC RRR", "DO3BOX") && !passesCqEnd("DL1ABC K1ABC FN42", "DO3BOX"),
+              "filter: reports, RRR and grids are hidden");
+        check(passesCqEnd("do3box K1ABC -12", "DO3BOX"), "filter: a line to my call always passes");
+        check(!passesCqEnd("", "DO3BOX") && !passesCqEnd("CQDL1ABC 73X", "DO3BOX"), "filter: no partial-word matches");
+    }
+
+    // --- decode filter "worked stations" and line kinds ----------------------
+    {
+        using FtDecodeFilter::hiddenAsWorked;
+        using FtDecodeFilter::lineKind;
+        using FtDecodeFilter::LineKind;
+        const QDateTime now = QDateTime::fromString(QStringLiteral("2026-11-03T12:00:00Z"), Qt::ISODate);
+        const QDateTime tenDaysAgo = now.addDays(-10);
+        check(!hiddenAsWorked(false, QDateTime(), 0, now), "worked filter: a new station is never hidden");
+        check(hiddenAsWorked(true, tenDaysAgo, 0, now), "worked filter: 0 days hides every worked station");
+        check(hiddenAsWorked(true, tenDaysAgo, 10, now) && hiddenAsWorked(true, tenDaysAgo, 30, now),
+              "worked filter: a QSO within the days is hidden");
+        check(!hiddenAsWorked(true, tenDaysAgo, 9, now), "worked filter: an older QSO is shown again");
+        check(lineKind("CQ DL1ABC JO62", "DO3BOX") == LineKind::Cq &&
+              lineKind("DO3BOX K1ABC -12", "DO3BOX") == LineKind::MyCall &&
+              lineKind("DL1ABC K1ABC RR73", "DO3BOX") == LineKind::End &&
+              lineKind("DL1ABC K1ABC R-07", "DO3BOX") == LineKind::Standard,
+              "line kinds: CQ, my call, QSO end, other traffic");
+    }
+
+    // --- JTDX colours ---------------------------------------------------------
+    {
+        using namespace FtDecodeColours;
+        Options o;   // JTDX defaults: DXCC and call on, grid off
+        LogStatus s;
+        check(novelty(s, o) == Novelty::Unknown, "colours: no log state yet = no colour");
+        s.known = true; s.dxccKnown = true; s.gridKnown = true;
+        check(novelty(s, o) == Novelty::NewDxcc, "colours: new DXCC first");
+        s.dxccWorked = true;
+        check(novelty(s, o) == Novelty::NewDxccBand, "colours: then new DXCC on this band");
+        s.dxccWorkedBand = true;
+        check(novelty(s, o) == Novelty::NewCall, "colours: grid is off by default, then new call");
+        o.newGrid = true;
+        check(novelty(s, o) == Novelty::NewGrid, "colours: new grid before new call when on");
+        o.newGrid = false;
+        s.callWorked = true;
+        check(novelty(s, o) == Novelty::NewCallBand, "colours: call not yet on this band/mode");
+        s.callWorkedBandMode = true;
+        check(novelty(s, o) == Novelty::Worked, "colours: everything worked = worked (struck through)");
+        o.newCall = false; s.callWorked = false;
+        check(novelty(s, o) == Novelty::None, "colours: nothing new, not worked");
+
+        const QColor white(255, 255, 255), dark(30, 30, 30);
+        check(readable(QColor(0, 0, 0), white) == QColor(0, 0, 0), "colours: black CQ text stays on white");
+        check(contrast(readable(QColor(0, 0, 0), dark), dark) >= 3.0, "colours: CQ text is readable in a dark theme");
+        check(contrast(readable(QColor(0x70, 0x70, 0x70), dark), dark) >= 3.0, "colours: grey text is readable in a dark theme");
+        check(readable(QColor(255, 0, 0), white) == QColor(255, 0, 0), "colours: my call stays red");
+        check(forTheme(QColor(0xc0, 0x00, 0xc0), false) == QColor(0xc0, 0x00, 0xc0) &&
+              forTheme(QColor(0xc0, 0x00, 0xc0), true).value() < 0xc0,
+              "colours: the dark theme darkens the JTDX background");
     }
 
     // --- CQ calls: fade -------------------------------------------------------
