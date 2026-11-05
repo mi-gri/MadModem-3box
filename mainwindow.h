@@ -959,6 +959,10 @@ private slots:
      * @brief Shows application information.
      */
     void showAboutMadModem();
+    void restoreLastSession();
+    void spotFt8ToPskReporter(const Ft8RxDecoder::Decode &decode, const QString &call, const QString &grid,
+                              const QString &mode);
+    void saveLastSession();
 
     /**
      * @brief Opens the built-in MM help browser.
@@ -2123,6 +2127,10 @@ private:
     QAction *m_actFt8FilterCqEnd = nullptr;        // only CQ/RR73/73
     QAction *m_actFt8FilterWorked = nullptr;       // hide worked stations
     QSpinBox *m_spinFt8FilterWorkedDays = nullptr; // ... within N days, 0 = all
+    QAction *m_actFt8FilterCountries = nullptr;    // hide DXCC countries (JTDX)
+    QLineEdit *m_editFt8FilterCountries = nullptr; // ... cty.dat prefixes, comma separated
+    QMenu *m_menuFt8FilterContinents = nullptr;    // hide continents (JTDX)
+    QList<QAction *> m_actFt8FilterContinents;     // one per cty.dat continent code
     QTableWidget *m_tableFt8TxMessages = nullptr;
     QLineEdit *m_editFt8MyCall = nullptr;
     QLineEdit *m_editFt8MyGrid = nullptr;
@@ -2318,6 +2326,8 @@ private:
     bool m_txLevelTune = false;               // the control shows and sets the Tune level
     QTimer m_txLevelSaveTimer;                // spin box steps are saved once they settle
     bool m_lastRigPttOn = false;
+    double m_lastRxDialHz = 0.0;              // dial while receiving (not the split-shifted TX dial)
+    class PskReporter *m_pskReporter = nullptr;
     mm::CatRotatorController *m_catRotatorController = nullptr;
     QWidget *m_tabCatRotator = nullptr;
     mm::CatRotatorPanel *m_catRotatorSidePanel = nullptr;

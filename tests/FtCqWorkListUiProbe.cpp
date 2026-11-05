@@ -13,7 +13,7 @@
 #include <stdexcept>
 static void check(bool b,const char*s){if(!b){std::cerr<<"CHECK FAILED: "<<s<<std::endl;throw std::runtime_error(s);}}
 int main(int argc,char **argv){
- QApplication app(argc,argv);app.setApplicationName("MadModem");QSettings settings(AppSettings::settingsFilePath(),QSettings::IniFormat);settings.setValue("Updates/checkAtStartup",false);settings.sync();
+ QApplication app(argc,argv);app.setApplicationName("MultiModeModem");QSettings settings(AppSettings::settingsFilePath(),QSettings::IniFormat);settings.setValue("Updates/checkAtStartup",false);settings.sync();
  MainWindow w;w.show();QObject::disconnect(w.m_ftSlotScheduler,nullptr,&w,nullptr);
  for(QString mode:{QString("FT8"),QString("FT4")}){
   w.m_ft8OperatorStopLatched=true;w.stopFt8Sequencer("CQ probe reset");w.ui->cmbMode->setCurrentText(mode);w.m_ft8OperatorStopLatched=false;

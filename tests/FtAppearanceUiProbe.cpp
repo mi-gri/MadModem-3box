@@ -13,7 +13,7 @@
 static void require(bool ok,const char *why){if(!ok)throw std::runtime_error(why);}
 static void settle(){QEventLoop l;QTimer::singleShot(100,&l,&QEventLoop::quit);l.exec();}
 int main(int argc,char**argv){
- QApplication app(argc,argv);app.setApplicationName("MadModem");
+ QApplication app(argc,argv);app.setApplicationName("MultiModeModem");
  QSettings s(AppSettings::settingsFilePath(),QSettings::IniFormat);s.setValue("Updates/checkAtStartup",false);s.sync();
  MainWindow w;w.show();w.ui->sideTabWidget->setFixedWidth(426);
  for(QString mode:{QString("FT8"),QString("FT4")}) {

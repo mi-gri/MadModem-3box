@@ -9,6 +9,7 @@
 #include <QDialog>
 #include <QHash>
 #include <QList>
+#include <QMap>
 #include <QRect>
 #include <QSize>
 #include <QString>
@@ -93,6 +94,8 @@ protected:
     void showEvent(QShowEvent *event) override;
 
 private:
+    void updateAntennaByBandButton();
+    void editAntennaByBand();
     struct ColourButton
     {
         QPushButton *button = nullptr;
@@ -188,6 +191,9 @@ private:
     QCheckBox *m_chkWatchListIcon = nullptr;
     QCheckBox *m_chkLogbookStrikeWorkedCalls = nullptr;
     QCheckBox *m_chkLogbookUdpEnabled = nullptr;
+    QCheckBox *m_chkPskReporterEnabled = nullptr;
+    QPushButton *m_btnAntennaByBand = nullptr;
+    QMap<QString, QString> m_antennaByBand;
     QLineEdit *m_editLogbookUdpServer = nullptr;
     QSpinBox *m_spinLogbookUdpPort = nullptr;
     QComboBox *m_comboLogbookUdpFormat = nullptr;

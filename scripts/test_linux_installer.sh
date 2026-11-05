@@ -10,7 +10,7 @@ fi
 bash "$installer" --accept-gpl3
 test -x /usr/bin/MadModem
 test -f /usr/lib/madmodem/bin/managed-install.flag
-test -f /usr/share/applications/MadModem.desktop
+test -f /usr/share/applications/MultiModeModem.desktop
 user_data="${XDG_DATA_HOME:-$HOME/.local/share}/MadModem"
 mkdir -p "$user_data"
 printf 'preserve user data\n' > "$user_data/installer-test.txt"

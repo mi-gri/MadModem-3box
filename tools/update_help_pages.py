@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from cw_neural_help import HELP as CW_NEURAL_HELP
+from product_name import brand
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1608,9 +1609,9 @@ def main() -> int:
             nav = nav_match.group(0)
             page = (
                 f"<!DOCTYPE html><html lang='{lang}'><head><meta charset='utf-8'>"
-                f"<title>{title}</title><link rel='stylesheet' href='../style.css'></head><body>\n"
-                f"{nav}\n{body}\n"
-                f"<div class='footer'>MadModem {VERSION} — Qt Help — {LANGUAGE_NAMES[lang]}</div>\n"
+                f"<title>{brand(title)}</title><link rel='stylesheet' href='../style.css'></head><body>\n"
+                f"{brand(nav)}\n{brand(body)}\n"
+                f"<div class='footer'>MultiModeModem {VERSION} — based on MadModem {VERSION} — Qt Help — {LANGUAGE_NAMES[lang]}</div>\n"
                 "</body></html>\n"
             )
             path.write_text(page, encoding="utf-8", newline="\n")

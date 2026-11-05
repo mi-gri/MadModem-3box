@@ -4,6 +4,7 @@
 #include "dsp/DspEngine.h"
 #include "widgets/CqSpots.h"
 #include "modems/ft8/FtDecodeFilter.h"
+#include "utils/ProductName.h"
 #include "modems/ft8/FtDecodeColours.h"
 
 #include <QObject>
@@ -140,6 +141,45 @@ int main()
               lineKind("DL1ABC K1ABC RR73", "DO3BOX") == LineKind::End &&
               lineKind("DL1ABC K1ABC R-07", "DO3BOX") == LineKind::Standard,
               "line kinds: CQ, my call, QSO end, other traffic");
+    }
+
+    // --- decode filter "hide countries" (JTDX) ------------------------------
+    {
+        using FtDecodeFilter::countryPrefixList;
+        using FtDecodeFilter::hiddenByCountry;
+        const QStringList list = countryPrefixList(QStringLiteral(" ua, ua9 ,JA,,*4u1v,UA"));
+        check(list == QStringList({QStringLiteral("UA"), QStringLiteral("UA9"), QStringLiteral("JA"), QStringLiteral("*4U1V")}),
+              "countries: list parsed, upper case, spaces and duplicates removed");
+        check(hiddenByCountry(QStringLiteral("UA9"), list) && hiddenByCountry(QStringLiteral("ja"), list),
+              "countries: listed prefixes are hidden");
+        check(!hiddenByCountry(QStringLiteral("DL"), list) && !hiddenByCountry(QString(), list) &&
+              !hiddenByCountry(QStringLiteral("UA9"), QStringList()),
+              "countries: other, unknown and empty list are shown");
+    }
+
+    // --- product name (fork) --------------------------------------------------
+    {
+        using ProductName::brand;
+        check(brand(QStringLiteral("Über MM")) == QString::fromUtf8("Über m³") &&
+              brand(QStringLiteral("MadModem-Logbuch")) == QStringLiteral("MultiModeModem-Logbuch"),
+              "product name: visible names replaced");
+        check(brand(QStringLiteral("Pictures/MadModem/SSTV")) == QStringLiteral("Pictures/MultiModeModem/SSTV") &&
+              brand(QStringLiteral("MadModem_logbook.adi")) == QStringLiteral("MultiModeModem_logbook.adi") &&
+              brand(QStringLiteral("CQ DL1ABC/MM")) == QStringLiteral("CQ DL1ABC/MM") &&
+              brand(QStringLiteral("COMMS")) == QStringLiteral("COMMS"),
+              "product name: proposed paths and file names renamed, /MM and word parts untouched");
+    }
+
+    // --- decode filter "hide continents" (JTDX) -----------------------------
+    {
+        using FtDecodeFilter::continentList;
+        using FtDecodeFilter::hiddenByContinent;
+        const QStringList list = continentList(QStringLiteral("oc, as,XX,AS"));
+        check(list == QStringList({QStringLiteral("AS"), QStringLiteral("OC")}),
+              "continents: valid codes only, fixed order, duplicates removed");
+        check(hiddenByContinent(QStringLiteral("as"), list) && !hiddenByContinent(QStringLiteral("EU"), list) &&
+              !hiddenByContinent(QString(), list) && !hiddenByContinent(QStringLiteral("OC"), QStringList()),
+              "continents: ticked ones hidden, others, unknown and none ticked shown");
     }
 
     // --- JTDX colours ---------------------------------------------------------

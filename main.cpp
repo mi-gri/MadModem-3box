@@ -1,4 +1,6 @@
 #include "utils/ApplicationIdentity.h"
+#include "utils/InstallationPaths.h"
+#include "utils/ProductName.h"
 #include "runtime/SessionDiagnosticsUiTap.h"
 #include "runtime/SessionDiagnostics.h"
 // -----------------------------------------------------------------------------
@@ -11,6 +13,7 @@
 #include "mainwindow.h"
 #include "audio/AudioBlock.h"
 #include "settings/AppSettings.h"
+#include <QSettings>
 #include "modems/ft8/Ft8RxDecoder.h"
 #include "utils/CockpitTheme.h"
 #include "utils/RuntimeI18n.h"
@@ -119,7 +122,8 @@ int main(int argc, char *argv[])
     qRegisterMetaType<QVector<quint8>>("QVector<quint8>");
     qRegisterMetaType<QVector<QPointF>>("QVector<QPointF>");
     app.setStyle(new DelayedToolTipStyle());
-    QCoreApplication::setApplicationName(QStringLiteral("MadModem"));
+    QCoreApplication::setApplicationName(ProductName::longName());
+    MadModemInstallation::adoptUpstreamUserData();
     QCoreApplication::setApplicationVersion(QStringLiteral(MADMODEM_VERSION_STRING));
     app.setApplicationDisplayName(MadModemIdentity::windowTitle());
     app.setWindowIcon(QIcon(":/icons/madmodem.png"));
@@ -132,19 +136,19 @@ int main(int argc, char *argv[])
     if (startupArguments.size() == 2 &&
         (startupArguments.at(1) == QStringLiteral("--version") ||
          startupArguments.at(1) == QStringLiteral("-v"))) {
-        std::fprintf(stdout, "MadModem %s\n", MADMODEM_VERSION_STRING);
+        std::fprintf(stdout, "MultiModeModem %s (based on MadModem)\n", MADMODEM_VERSION_STRING);
         std::fflush(stdout);
         return 0;
     }
 
     if (startupArguments.size() == 2 && startupArguments.at(1) == QStringLiteral("--build-info")) {
-        std::fprintf(stdout, "MadModem %s\nBuild %s\nCommit %s\n", MADMODEM_VERSION_STRING, MadModemBuild::number(), MADMODEM_BUILD_COMMIT);
+        std::fprintf(stdout, "MultiModeModem %s (based on MadModem)\nBuild %s\nCommit %s\n", MADMODEM_VERSION_STRING, MadModemBuild::number(), MADMODEM_BUILD_COMMIT);
         std::fflush(stdout);
         return 0;
     }
 
     QCommandLineParser commandLine;
-    commandLine.setApplicationDescription(QStringLiteral("MadModem cross-platform amateur-radio modem"));
+    commandLine.setApplicationDescription(QStringLiteral("MultiModeModem (m\u00b3) cross-platform amateur-radio modem, based on MadModem"));
     commandLine.addHelpOption();
     commandLine.addVersionOption();
     const QCommandLineOption ftRegressionOption(
@@ -311,7 +315,20 @@ int main(int argc, char *argv[])
     MadModemUi::installCockpitMainWindowChrome(&window);
     // A normal maximized window keeps native popup stacking on Windows.
     // Never reassert fullscreen/activation from delayed startup callbacks.
-    MadModemUi::showMainWindowMaximized(&window);
+    // The window comes back as it was closed (MainWindow::saveLastSession);
+    // the first start is maximized.
+    {
+        QSettings session(AppSettings::settingsFilePath(), QSettings::IniFormat);
+        const QByteArray geometry = session.value(QStringLiteral("Session/windowGeometry")).toByteArray();
+        const bool maximized = session.value(QStringLiteral("Session/windowMaximized"), true).toBool();
+        if (!geometry.isEmpty()) window.restoreGeometry(geometry);
+        if (maximized || geometry.isEmpty()) {
+            MadModemUi::showMainWindowMaximized(&window);
+        } else {
+            window.setWindowState(window.windowState() & ~(Qt::WindowFullScreen | Qt::WindowMaximized | Qt::WindowMinimized));
+            window.show();
+        }
+    }
 
     return app.exec();
 }

@@ -1011,6 +1011,12 @@ QWidget *AppSettingsDialog::makeUserQthMacrosPage()
     addVariableRow(myStationGrid, 3, L(QStringLiteral("Locator")), QStringLiteral("{LOC}"), m_editMyLocator, myStationGroup);
     addVariableRow(myStationGrid, 4, L(QStringLiteral("Rig")), QStringLiteral("{RIG}"), m_editRig, myStationGroup);
     addVariableRow(myStationGrid, 5, L(QStringLiteral("Antenna")), QStringLiteral("{ANT}"), m_editAntenna, myStationGroup);
+    m_antennaByBand = m_initialSettings.textAntennaByBand;
+    m_btnAntennaByBand = new QPushButton(myStationGroup);
+    m_btnAntennaByBand->setToolTip(L(QStringLiteral("A different antenna for single bands. Bands without an entry use the antenna above.")));
+    myStationGrid->addWidget(m_btnAntennaByBand, 5, 3);
+    updateAntennaByBandButton();
+    connect(m_btnAntennaByBand, &QPushButton::clicked, this, &AppSettingsDialog::editAntennaByBand);
     addVariableRow(myStationGrid, 6, L(QStringLiteral("Power")), QStringLiteral("{PWR}"), m_editPower, myStationGroup);
 
     QGroupBox *coordinatesGroup = new QGroupBox(L(QStringLiteral("Precise station coordinates")), variablesContent);
@@ -1272,6 +1278,22 @@ QWidget *AppSettingsDialog::makeLogbookPage()
     connect(m_chkLogbookUdpEnabled, &QCheckBox::toggled, this, refreshUdpControls);
     refreshUdpControls(m_chkLogbookUdpEnabled->isChecked());
     layout->addWidget(udpGroup);
+
+    // PSK Reporter (as in JTDX/WSJT-X).
+    QGroupBox *pskGroup = new QGroupBox(QStringLiteral("PSK Reporter"), holder);
+    pskGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+    QGridLayout *pskGrid = new QGridLayout(pskGroup);
+    pskGrid->setContentsMargins(10, 8, 10, 10);
+    pskGrid->setHorizontalSpacing(10);
+    pskGrid->setVerticalSpacing(6);
+    m_chkPskReporterEnabled = new QCheckBox(L(QStringLiteral("Report received FT8/FT4 stations to PSK Reporter")), pskGroup);
+    m_chkPskReporterEnabled->setChecked(m_initialSettings.pskReporterEnabled);
+    pskGrid->addWidget(m_chkPskReporterEnabled, 0, 0, 1, 2);
+    QLabel *pskInfo = new QLabel(L(QStringLiteral("Stations that send their locator are reported to pskreporter.info every five minutes, with your callsign, locator, the antenna of the band (User / station / QTH), frequency and SNR. Requires CAT for the frequency.")), pskGroup);
+    pskInfo->setWordWrap(true);
+    pskInfo->setStyleSheet(QStringLiteral("color: palette(mid);"));
+    pskGrid->addWidget(pskInfo, 1, 0, 1, 2);
+    layout->addWidget(pskGroup);
 
     QGroupBox *decodeTableGroup = new QGroupBox(L(QStringLiteral("Decode table readability")), holder);
     decodeTableGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
@@ -2472,6 +2494,7 @@ void AppSettingsDialog::collectSettings()
         merged.textMyLongitudeDeg = m_spinMyLongitude != nullptr ? m_spinMyLongitude->value() : 0.0;
         merged.textRig = m_editRig != nullptr ? m_editRig->text().trimmed() : QString();
         merged.textAntenna = m_editAntenna != nullptr ? m_editAntenna->text().trimmed() : QString();
+        merged.textAntennaByBand = m_antennaByBand;
         merged.textPower = m_editPower != nullptr ? m_editPower->text().trimmed() : QString();
 
         QStringList labels;
@@ -2550,6 +2573,8 @@ void AppSettingsDialog::collectSettings()
     if (m_chkLogbookUdpEnabled != nullptr) {
         merged.logbookUdpEnabled = m_chkLogbookUdpEnabled->isChecked();
     }
+    if (m_chkPskReporterEnabled != nullptr) merged.pskReporterEnabled = m_chkPskReporterEnabled->isChecked();
+
     if (m_editLogbookUdpServer != nullptr) {
         merged.logbookUdpServer = m_editLogbookUdpServer->text().trimmed();
         if (merged.logbookUdpServer.isEmpty()) merged.logbookUdpServer = QStringLiteral("127.0.0.1");
@@ -2824,4 +2849,56 @@ void AppSettingsDialog::accept()
         }
     }
     QDialog::accept();
+}
+
+void AppSettingsDialog::updateAntennaByBandButton()
+{
+    if (m_btnAntennaByBand == nullptr) return;
+    int count = 0;
+    for (const QString &antenna : std::as_const(m_antennaByBand)) {
+        if (!antenna.trimmed().isEmpty()) ++count;
+    }
+    const QString text = L(QStringLiteral("Per band..."));
+    m_btnAntennaByBand->setText(count > 0 ? QStringLiteral("%1 (%2)").arg(text).arg(count) : text);
+}
+
+// One antenna per band; an empty row uses the default antenna.
+void AppSettingsDialog::editAntennaByBand()
+{
+    static const char *const bands[] = {"160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m",
+                                        "12m", "10m", "6m", "2m", "70cm", "23cm"};
+    QDialog dialog(this);
+    dialog.setWindowTitle(L(QStringLiteral("Antenna per band")));
+    QVBoxLayout *layout = new QVBoxLayout(&dialog);
+    QLabel *hint = new QLabel(L(QStringLiteral("Bands without an entry use the antenna of User / station / QTH.")), &dialog);
+    hint->setWordWrap(true);
+    layout->addWidget(hint);
+    QTableWidget *table = new QTableWidget(int(std::size(bands)), 2, &dialog);
+    table->setHorizontalHeaderLabels({L(QStringLiteral("Band")), L(QStringLiteral("Antenna"))});
+    table->verticalHeader()->setVisible(false);
+    table->horizontalHeader()->setStretchLastSection(true);
+    const QString fallback = m_editAntenna != nullptr ? m_editAntenna->text().trimmed() : QString();
+    for (int row = 0; row < int(std::size(bands)); ++row) {
+        const QString band = QString::fromLatin1(bands[row]);
+        QTableWidgetItem *bandItem = new QTableWidgetItem(band);
+        bandItem->setFlags(Qt::ItemIsEnabled);
+        table->setItem(row, 0, bandItem);
+        QTableWidgetItem *antennaItem = new QTableWidgetItem(m_antennaByBand.value(band));
+        antennaItem->setToolTip(fallback);
+        table->setItem(row, 1, antennaItem);
+    }
+    table->resizeColumnToContents(0);
+    layout->addWidget(table, 1);
+    QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    dialog.resize(420, 480);
+    if (dialog.exec() != QDialog::Accepted) return;
+    m_antennaByBand.clear();
+    for (int row = 0; row < table->rowCount(); ++row) {
+        const QString antenna = table->item(row, 1) != nullptr ? table->item(row, 1)->text().trimmed() : QString();
+        if (!antenna.isEmpty()) m_antennaByBand.insert(table->item(row, 0)->text(), antenna);
+    }
+    updateAntennaByBandButton();
 }

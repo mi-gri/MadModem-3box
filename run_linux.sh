@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -x "$ROOT/build-linux/MadModem" ]]; then
-    exec "$ROOT/build-linux/MadModem" "$@"
+if [[ -x "$ROOT/build-linux/MultiModeModem" ]]; then
+    exec "$ROOT/build-linux/MultiModeModem" "$@"
 fi
-if [[ -x "$ROOT/dist/linux/bin/MadModem" ]]; then
-    exec "$ROOT/dist/linux/bin/MadModem" "$@"
+if [[ -x "$ROOT/dist/linux/bin/MultiModeModem" ]]; then
+    exec "$ROOT/dist/linux/bin/MultiModeModem" "$@"
 fi
-if [[ -x "$ROOT/dist/linux/MadModem" ]]; then
-    exec "$ROOT/dist/linux/MadModem" "$@"
+if [[ -x "$ROOT/dist/linux/MultiModeModem" ]]; then
+    exec "$ROOT/dist/linux/MultiModeModem" "$@"
 fi
-echo "MadModem Linux executable not found. Build first with ./build_all.sh or cmake --build build-linux." >&2
+echo "MultiModeModem Linux executable not found. Build first with ./build_all.sh or cmake --build build-linux." >&2
 exit 1

@@ -9,6 +9,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 from update_help_pages import PAGES as REVIEWED_HELP_PAGES
+from product_name import brand
 
 ROOT = Path(__file__).resolve().parents[1]
 HELP = ROOT / "docs" / "help"
@@ -90,7 +91,7 @@ def main() -> int:
             reviewed = REVIEWED_HELP_PAGES.get(lang, {}).get(page.name)
             if reviewed is not None:
                 reviewed_title, reviewed_body = reviewed
-                if f"<title>{reviewed_title}</title>" not in text or reviewed_body not in text:
+                if f"<title>{brand(reviewed_title)}</title>" not in text or brand(reviewed_body) not in text:
                     errors.append(f"{page.relative_to(ROOT)}: reviewed localized body is stale")
 
         qhp = HELP / f"MM_{lang}.qhp"

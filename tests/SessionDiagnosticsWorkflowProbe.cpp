@@ -19,7 +19,7 @@
 #include <iostream>
 #include <cstdlib>
 static void check(bool v,const char *s){if(!v){std::cerr<<s<<'\n';std::exit(1);}}
-int main(int argc,char **argv){QApplication app(argc,argv);app.setApplicationName("MadModem");check(argc==2,"pass aligned FT8 WAV");QTemporaryDir temporary;check(temporary.isValid(),"temporary folder");
+int main(int argc,char **argv){QApplication app(argc,argv);app.setApplicationName("MultiModeModem");check(argc==2,"pass aligned FT8 WAV");QTemporaryDir temporary;check(temporary.isValid(),"temporary folder");
  QFile managed(QCoreApplication::applicationDirPath()+"/managed-install.flag");bool owned=!managed.exists();if(owned){check(managed.open(QIODevice::WriteOnly),"managed test marker");managed.close();}
  QSettings initial(AppSettings::settingsFilePath(),QSettings::IniFormat);initial.clear();initial.setValue("Updates/checkAtStartup",false);initial.setValue("Diagnostics/sessionEnabled",false);initial.setValue("QRZ/password","SECRET_PROFILE_PROBE");initial.sync();
  SessionDiagnostics::installQtCapture();SessionDiagnosticsUiTap tap;app.installEventFilter(&tap);QString path,closePath;

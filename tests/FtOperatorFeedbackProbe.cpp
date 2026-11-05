@@ -14,7 +14,7 @@
 #include <iostream>
 #include <stdexcept>
 static void check(bool b,const char*why){if(!b)throw std::runtime_error(why);}
-int main(int argc,char**argv){QApplication app(argc,argv);app.setApplicationName("MadModem");
+int main(int argc,char**argv){QApplication app(argc,argv);app.setApplicationName("MultiModeModem");
  QSettings config(AppSettings::settingsFilePath(),QSettings::IniFormat);config.setValue("Updates/checkAtStartup",false);config.setValue("UI/language","it");config.sync();
  MainWindow w;w.m_settings.textMyCallsign="IZ6NNH";w.m_settings.textMyLocator="JN63";w.resize(1920,1080);w.show();
  for(QString mode:{QString("FT8"),QString("FT4")}){

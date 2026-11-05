@@ -2,6 +2,7 @@
 #define APPSETTINGS_H
 
 #include <QHash>
+#include <QMap>
 #include <QString>
 #include <QVector>
 #include <QStringList>
@@ -51,6 +52,7 @@ public:
     bool logbookUdpEnabled = false;
     QString logbookUdpServer = "127.0.0.1";
     int logbookUdpPort = 2237;
+    bool pskReporterEnabled = false;   // spot received FT8/FT4 stations to pskreporter.info
     int logbookUdpTextFormat = 0; // 0 bundle, 1 type 5, 2 type 12
     bool logbookVisibleFieldsConfigured = false;
     QStringList logbookVisibleFields;
@@ -264,6 +266,9 @@ public:
     bool ftDecodeFilterCqEnd = false;       // only CQ/RR73/73
     bool ftDecodeFilterWorked = false;      // hide stations already worked ...
     int ftDecodeFilterWorkedDays = 0;       // ... within this many days, 0 = all worked
+    bool ftDecodeFilterCountries = false;   // hide stations from these DXCC entities
+    QString ftDecodeFilterCountryList;      // comma separated cty.dat primary prefixes
+    QString ftDecodeFilterContinentList;    // hidden continents, e.g. "AS,OC" (empty = off)
 
     // FT4/FT8 operator filters and supervised automation policy.  Callsign
     // lists are normalized on use and stored as one call per line/list item.
@@ -357,7 +362,14 @@ public:
     double textMyLatitudeDeg = 0.0;
     double textMyLongitudeDeg = 0.0;
     QString textRig;
-    QString textAntenna;
+    QString textAntenna;                       // default antenna ({ANT}, PSK Reporter)
+    QMap<QString, QString> textAntennaByBand;  // "20m" -> antenna on that band; empty: textAntenna
+    // The antenna used on a band ("20m"): its own entry, else the default.
+    QString antennaForBand(const QString &band) const
+    {
+        const QString own = textAntennaByBand.value(band.trimmed().toLower()).trimmed();
+        return own.isEmpty() ? textAntenna.trimmed() : own;
+    }
     QString textPower;
     QStringList textMacroLabels = {
         "CQ",

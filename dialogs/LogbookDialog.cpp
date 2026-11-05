@@ -137,7 +137,7 @@ LogbookDialog::LogbookDialog(AdifLogbook *logbook, AppSettings *settings, QWidge
     m_actExport = m_toolbar->addAction(style()->standardIcon(QStyle::SP_DialogSaveButton), L("Export ADIF..."));
     m_actExport->setObjectName("logbookExportAdif");
     connect(m_actExport,&QAction::triggered,this,[this]{
-        exportRecords(outputRecords(),"Export ADIF", "MadModem_QSOs.adi", "QSOs");
+        exportRecords(outputRecords(),"Export ADIF", "MultiModeModem_QSOs.adi", "QSOs");
     });
     m_toolbar->addAction(actCabrillo);
     auto* more = new QToolButton(this);
@@ -145,7 +145,7 @@ LogbookDialog::LogbookDialog(AdifLogbook *logbook, AppSettings *settings, QWidge
     auto* menu = new QMenu(more);
     menu->addAction(m_actImport);
     auto* csv=menu->addAction(L("Export CSV..."));
-    connect(csv,&QAction::triggered,this,[this]{exportRecordsCsv(outputRecords(),"Export CSV","MadModem_QSOs.csv","QSOs");});
+    connect(csv,&QAction::triggered,this,[this]{exportRecordsCsv(outputRecords(),"Export CSV","MultiModeModem_QSOs.csv","QSOs");});
     auto* copyCsv=menu->addAction(L("Copy CSV"));
     connect(copyCsv,&QAction::triggered,this,[this]{QApplication::clipboard()->setText(csvForRecords(outputRecords()));});
     auto* copyAdif=menu->addAction(L("Copy ADIF"));
@@ -999,7 +999,7 @@ void LogbookDialog::saveSelectedRowsCsv()
 {
     exportRecordsCsv(selectedRecords(),
                      "Save selected rows as CSV",
-                     "MadModem_logbook_selected.csv",
+                     "MultiModeModem_logbook_selected.csv",
                      "Selected QSOs");
 }
 
@@ -1069,7 +1069,7 @@ void LogbookDialog::exportAllAdif()
     }
     exportRecords(m_logbook->records(),
                   L("Export all ADIF"),
-                  QStringLiteral("MadModem_logbook_all.adi"),
+                  QStringLiteral("MultiModeModem_logbook_all.adi"),
                   "Full logbook");
 }
 
@@ -1077,7 +1077,7 @@ void LogbookDialog::exportSearchResultAdif()
 {
     exportRecords(m_displayedRecords,
                   "Export search result ADIF",
-                  "MadModem_logbook_search_result.adi",
+                  "MultiModeModem_logbook_search_result.adi",
                   "Search result");
 }
 
@@ -1085,7 +1085,7 @@ void LogbookDialog::exportSelectedAdif()
 {
     exportRecords(selectedRecords(),
                   "Export selected ADIF",
-                  "MadModem_logbook_selected.adi",
+                  "MultiModeModem_logbook_selected.adi",
                   "Selected QSOs");
 }
 
@@ -1137,7 +1137,7 @@ QVector<LogbookEntry> LogbookDialog::chooseOutputRecords(const QString &dialogTi
 
     Q_UNUSED(dialogTitle)
     if(scopeLabel) *scopeLabel=m_outputScope->currentText();
-    if(defaultBaseName) *defaultBaseName="MadModem_QSOs";
+    if(defaultBaseName) *defaultBaseName="MultiModeModem_QSOs";
     return outputRecords();
 }
 
@@ -1535,7 +1535,7 @@ bool LogbookDialog::saveStatisticsToPdf(const QVector<LogbookEntry> &records,
         return false;
     }
 
-    QString defaultName = defaultBaseName.isEmpty() ? QStringLiteral("MadModem_logbook") : defaultBaseName;
+    QString defaultName = defaultBaseName.isEmpty() ? QStringLiteral("MultiModeModem_logbook") : defaultBaseName;
     if (defaultName.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive)) {
         defaultName.chop(4);
     }
@@ -1607,7 +1607,7 @@ bool LogbookDialog::saveRecordsToPdf(const QVector<LogbookEntry> &records,
         return false;
     }
 
-    QString defaultName = defaultBaseName.isEmpty() ? "MadModem_logbook" : defaultBaseName;
+    QString defaultName = defaultBaseName.isEmpty() ? "MultiModeModem_logbook" : defaultBaseName;
     if (!defaultName.endsWith(".pdf", Qt::CaseInsensitive)) {
         defaultName += ".pdf";
     }

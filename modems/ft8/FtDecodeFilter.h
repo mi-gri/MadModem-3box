@@ -42,4 +42,50 @@ inline bool hiddenAsWorked(bool worked, const QDateTime &lastQsoUtc, int days, c
     if (days <= 0) return true;
     return lastQsoUtc.isValid() && lastQsoUtc.secsTo(nowUtc) <= qint64{days} * 86400;
 }
+
+// The "hide countries" filter (JTDX "Hide messages from countries"): a comma
+// separated list of DXCC primary prefixes as in cty.dat (e.g. "UA,UA9,JA",
+// "*4U1V" for a WAE entity). Spaces are tolerated, case does not matter.
+inline QStringList countryPrefixList(const QString &text)
+{
+    QStringList list;
+    const QStringList parts = text.toUpper().split(QLatin1Char(','), Qt::SkipEmptyParts);
+    for (const QString &part : parts) {
+        const QString prefix = part.trimmed();
+        if (!prefix.isEmpty() && !list.contains(prefix)) list << prefix;
+    }
+    return list;
+}
+
+inline bool hiddenByCountry(const QString &primaryPrefix, const QStringList &hiddenPrefixes)
+{
+    const QString prefix = primaryPrefix.trimmed().toUpper();
+    return !prefix.isEmpty() && hiddenPrefixes.contains(prefix);
+}
+
+// The "hide continents" filter (JTDX "Hide messages from continents"): the
+// cty.dat continent codes, stored comma separated in a fixed order.
+inline const QStringList &continentCodes()
+{
+    static const QStringList codes = {QStringLiteral("AF"), QStringLiteral("AN"), QStringLiteral("AS"),
+                                      QStringLiteral("EU"), QStringLiteral("NA"), QStringLiteral("OC"),
+                                      QStringLiteral("SA")};
+    return codes;
+}
+
+inline QStringList continentList(const QString &text)
+{
+    const QStringList parts = countryPrefixList(text);
+    QStringList list;
+    for (const QString &code : continentCodes()) {
+        if (parts.contains(code)) list << code;
+    }
+    return list;
+}
+
+inline bool hiddenByContinent(const QString &continent, const QStringList &hiddenContinents)
+{
+    const QString code = continent.trimmed().toUpper();
+    return !code.isEmpty() && hiddenContinents.contains(code);
+}
 } // namespace FtDecodeFilter

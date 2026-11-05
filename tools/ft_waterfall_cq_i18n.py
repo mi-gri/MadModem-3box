@@ -120,3 +120,83 @@ KEYS.update({k:dict(zip(LANGS,v)) for k,v in {
   'FT late final: sending 73 to %1.','FT conferma tardiva: invio 73 a %1.','FT confirmation tardive : envoi de 73 à %1.',
   'FT verspätetes Ende: sende 73 an %1.','FT sen avslutning: sender 73 til %1.','FT opožděné ukončení: posílám 73 pro %1.'),
 }.items()})
+# Decode filter: hide countries (JTDX)
+KEYS.update({k:dict(zip(LANGS,v)) for k,v in {
+ 'ft_filter_countries':('Hide countries','Nascondi paesi','Masquer des pays','Länder ausblenden','Skjul land','Skrýt země'),
+ 'ft_filter_countries_tooltip':(
+  'Hides stations from the DXCC countries listed below. Stations on the watch list stay visible.',
+  'Nasconde le stazioni dei paesi DXCC elencati qui sotto. Le stazioni della lista di osservazione restano visibili.',
+  'Masque les stations des pays DXCC indiqués ci-dessous. Les stations de la liste de surveillance restent visibles.',
+  'Blendet Stationen aus den unten eingetragenen DXCC-Ländern aus. Stationen der Beobachtungsliste bleiben sichtbar.',
+  'Skjuler stasjoner fra DXCC-landene nedenfor. Stasjoner på overvåkingslisten forblir synlige.',
+  'Skryje stanice ze zemí DXCC uvedených níže. Stanice ze seznamu sledovaných zůstávají viditelné.'),
+ 'ft_filter_country_list_tooltip':(
+  'Comma separated DXCC prefixes as in cty.dat, e.g. UA,UA9,JA or DL,F,I. The prefix of a station is shown in the tooltip of the Country column.',
+  'Prefissi DXCC separati da virgola come in cty.dat, ad es. UA,UA9,JA o DL,F,I. Il prefisso di una stazione è indicato nel suggerimento della colonna Paese.',
+  'Préfixes DXCC séparés par des virgules comme dans cty.dat, p. ex. UA,UA9,JA ou DL,F,I. Le préfixe d’une station figure dans l’info-bulle de la colonne Pays.',
+  'DXCC-Präfixe wie in cty.dat, durch Komma getrennt, z. B. UA,UA9,JA oder DL,F,I. Das Präfix einer Station steht im Tooltip der Spalte Land.',
+  'DXCC-prefikser som i cty.dat, atskilt med komma, f.eks. UA,UA9,JA eller DL,F,I. Prefikset til en stasjon vises i verktøytipset i Land-kolonnen.',
+  'Prefixy DXCC jako v cty.dat oddělené čárkou, např. UA,UA9,JA nebo DL,F,I. Prefix stanice je uveden v nápovědě sloupce Země.'),
+}.items()})
+# Decode filter: hide continents (JTDX)
+KEYS.update({k:dict(zip(LANGS,v)) for k,v in {
+ 'ft_filter_continents':('Hide continents','Nascondi continenti','Masquer des continents','Kontinente ausblenden','Skjul kontinenter','Skrýt kontinenty'),
+ 'ft_filter_continents_tooltip':(
+  'Hides stations from the ticked continents (cty.dat). Stations on the watch list stay visible.',
+  'Nasconde le stazioni dei continenti selezionati (cty.dat). Le stazioni della lista di osservazione restano visibili.',
+  'Masque les stations des continents cochés (cty.dat). Les stations de la liste de surveillance restent visibles.',
+  'Blendet Stationen der angehakten Kontinente aus (cty.dat). Stationen der Beobachtungsliste bleiben sichtbar.',
+  'Skjuler stasjoner fra de avkryssede kontinentene (cty.dat). Stasjoner på overvåkingslisten forblir synlige.',
+  'Skryje stanice ze zaškrtnutých kontinentů (cty.dat). Stanice ze seznamu sledovaných zůstávají viditelné.'),
+ 'continent_af':('Africa','Africa','Afrique','Afrika','Afrika','Afrika'),
+ 'continent_an':('Antarctica','Antartide','Antarctique','Antarktis','Antarktis','Antarktida'),
+ 'continent_as':('Asia','Asia','Asie','Asien','Asia','Asie'),
+ 'continent_eu':('Europe','Europa','Europe','Europa','Europa','Evropa'),
+ 'continent_na':('North America','Nord America','Amérique du Nord','Nordamerika','Nord-Amerika','Severní Amerika'),
+ 'continent_oc':('Oceania','Oceania','Océanie','Ozeanien','Oseania','Oceánie'),
+ 'continent_sa':('South America','Sud America','Amérique du Sud','Südamerika','Sør-Amerika','Jižní Amerika'),
+}.items()})
+# Session memory: RX resumed at start
+KEYS.update({k:dict(zip(LANGS,v)) for k,v in {
+ 'log.rx_was_running_when_the_program_was_closed_starting_rx':(
+  'RX was running when the program was closed: starting RX.',
+  'La RX era attiva alla chiusura del programma: avvio della RX.',
+  'La RX était active à la fermeture du programme : démarrage de la RX.',
+  'RX lief beim Beenden des Programms: RX wird gestartet.',
+  'RX var aktiv da programmet ble lukket: starter RX.',
+  'RX běžel při ukončení programu: spouštím RX.'),
+}.items()})
+# PSK Reporter (JTDX)
+SOURCES.update({k:dict(zip(LANGS,v)) for k,v in {
+ 'Report received FT8/FT4 stations to PSK Reporter':(
+  'Report received FT8/FT4 stations to PSK Reporter','Segnala a PSK Reporter le stazioni FT8/FT4 ricevute',
+  'Signaler à PSK Reporter les stations FT8/FT4 reçues','Empfangene FT8/FT4-Stationen an PSK Reporter melden',
+  'Rapporter mottatte FT8/FT4-stasjoner til PSK Reporter','Hlásit přijaté stanice FT8/FT4 do PSK Reporteru'),
+}.items()})
+# Antenna per band
+SOURCES.update({k:dict(zip(LANGS,v)) for k,v in {
+ 'Per band...':('Per band...','Per banda...','Par bande...','Je Band...','Per bånd...','Pro pásmo...'),
+ 'A different antenna for single bands. Bands without an entry use the antenna above.':(
+  'A different antenna for single bands. Bands without an entry use the antenna above.',
+  'Un’antenna diversa per singole bande. Le bande senza voce usano l’antenna qui sopra.',
+  'Une autre antenne pour certaines bandes. Les bandes sans entrée utilisent l’antenne ci-dessus.',
+  'Eine andere Antenne für einzelne Bänder. Bänder ohne Eintrag verwenden die Antenne darüber.',
+  'En annen antenne for enkelte bånd. Bånd uten oppføring bruker antennen over.',
+  'Jiná anténa pro jednotlivá pásma. Pásma bez záznamu používají anténu výše.'),
+ 'Antenna per band':('Antenna per band','Antenna per banda','Antenne par bande','Antenne je Band','Antenne per bånd','Anténa pro pásmo'),
+ 'Bands without an entry use the antenna of User / station / QTH.':(
+  'Bands without an entry use the antenna of User / station / QTH.',
+  'Le bande senza voce usano l’antenna di Utente / stazione / QTH.',
+  'Les bandes sans entrée utilisent l’antenne de Utilisateur / station / QTH.',
+  'Bänder ohne Eintrag verwenden die Antenne aus Benutzer / Station / QTH.',
+  'Bånd uten oppføring bruker antennen fra Bruker / stasjon / QTH.',
+  'Pásma bez záznamu používají anténu z Uživatel / stanice / QTH.'),
+ 'Band':('Band','Banda','Bande','Band','Bånd','Pásmo'),
+ 'Stations that send their locator are reported to pskreporter.info every five minutes, with your callsign, locator, the antenna of the band (User / station / QTH), frequency and SNR. Requires CAT for the frequency.':(
+  'Stations that send their locator are reported to pskreporter.info every five minutes, with your callsign, locator, the antenna of the band (User / station / QTH), frequency and SNR. Requires CAT for the frequency.',
+  'Le stazioni che inviano il proprio locatore vengono segnalate a pskreporter.info ogni cinque minuti, con il tuo nominativo, locatore, l’antenna della banda (Utente / stazione / QTH), frequenza e SNR. Richiede il CAT per la frequenza.',
+  'Les stations qui envoient leur locator sont signalées à pskreporter.info toutes les cinq minutes, avec votre indicatif, locator, l’antenne de la bande (Utilisateur / station / QTH), fréquence et SNR. Nécessite le CAT pour la fréquence.',
+  'Stationen, die ihren Locator senden, werden alle fünf Minuten an pskreporter.info gemeldet, mit deinem Rufzeichen, Locator, der Antenne des Bandes (Benutzer / Station / QTH), Frequenz und SNR. Benötigt CAT für die Frequenz.',
+  'Stasjoner som sender lokatoren sin rapporteres hvert femte minutt til pskreporter.info, med ditt kallesignal, lokator, båndets antenne (Bruker / stasjon / QTH), frekvens og SNR. Krever CAT for frekvensen.',
+  'Stanice, které vysílají svůj lokátor, jsou každých pět minut hlášeny na pskreporter.info s vaší značkou, lokátorem, anténou pásma (Uživatel / stanice / QTH), frekvencí a SNR. Vyžaduje CAT pro frekvenci.'),
+}.items()})

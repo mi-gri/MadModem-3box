@@ -111,7 +111,7 @@ cp -a {payload}/. %{{buildroot}}/
 %files
 /usr/bin/MadModem
 /usr/lib/madmodem
-/usr/share/applications/MadModem.desktop
+/usr/share/applications/MultiModeModem.desktop
 /usr/share/icons/hicolor/*/apps/*.png
 %doc /usr/share/doc/madmodem
 ''')

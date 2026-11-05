@@ -99,7 +99,7 @@ QString collectionFilePath(const QString &lang)
 {
     QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (base.trimmed().isEmpty()) {
-        base = QDir::tempPath() + QStringLiteral("/MadModem");
+        base = QDir::tempPath() + QStringLiteral("/MultiModeModem");
     }
     QDir().mkpath(base);
     return QDir(base).filePath(QStringLiteral("MM_%1.qhc").arg(lang));
@@ -387,6 +387,7 @@ QString HelpDialog::locateHelpFile(const QString &fileName) const
         QDir(appDir).filePath(QStringLiteral("help/") + fileName),
         QDir(appDir).filePath(QStringLiteral("docs/help/") + fileName),
         QDir(appDir).filePath(fileName),
+        QDir(appDir).filePath(QStringLiteral("../share/MultiModeModem/help/") + fileName),
         QDir(appDir).filePath(QStringLiteral("../share/MadModem/help/") + fileName),
         QDir(QDir::currentPath()).filePath(QStringLiteral("docs/help/") + fileName),
         QDir(QDir::currentPath()).filePath(QStringLiteral("help/") + fileName),

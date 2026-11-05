@@ -11,7 +11,7 @@
 #include <stdexcept>
 void require(bool value,const char*message){if(!value)throw std::runtime_error(message);}
 int main(int argc,char**argv){
- QApplication app(argc,argv);app.setApplicationName("MadModem");
+ QApplication app(argc,argv);app.setApplicationName("MultiModeModem");
  QSettings settings(AppSettings::settingsFilePath(),QSettings::IniFormat);settings.setValue("Updates/checkAtStartup",false);settings.sync();
  MainWindow w;
  w.m_settings.textMyCallsign="IZ6NNH";w.m_settings.textMyLocator="JN63";w.m_settings.ft8NoResponseRetryCount=1;

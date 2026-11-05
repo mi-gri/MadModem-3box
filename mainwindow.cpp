@@ -48,6 +48,8 @@
 #include "modems/weatherfax/tx/WeatherFaxTransmitter.h"
 #include "widgets/RttyScopeWidget.h"
 #include "dxcc/CtyCountryFile.h"
+#include "utils/ProductName.h"
+#include "network/PskReporter.h"
 #include "rig/HamlibController.h"
 #include "dsp/cpu/CpuFeatures.h"
 #include "third_party/decodium_gpl/port/NtpClient.hpp"
@@ -112,6 +114,7 @@
 #include <QToolButton>
 #include <QIODevice>
 #include <QLineEdit>
+#include <QRegularExpressionValidator>
 #include <QLocale>
 #include <QList>
 #include <QMessageBox>
@@ -420,6 +423,9 @@ constexpr int kFtWorkedRole = Qt::UserRole + 431;      // station already in the
 constexpr int kFtLastQsoUtcRole = Qt::UserRole + 432;  // its latest QSO (UTC)
 constexpr int kFtSlotSeparatorRole = Qt::UserRole + 433;  // "──── HHMMSS ────" row
 constexpr int kFtLogPendingSinceRole = Qt::UserRole + 434; // logbook status asked at (ms since epoch), 0 = known
+constexpr int kFtCountryPrefixRole = Qt::UserRole + 435;   // DXCC primary prefix of the station (cty.dat)
+constexpr int kFtWatchedRole = Qt::UserRole + 436;         // station is on the watch list
+constexpr int kFtContinentRole = Qt::UserRole + 437;       // cty.dat continent of the station
 // With the "worked" filter on, a new row stays hidden while its logbook status
 // is pending, so it does not flash up and vanish again; after this time it is
 // shown anyway (logbook slow or unavailable).
@@ -1190,12 +1196,13 @@ Ft8DecodeDisplayInfo makeFt8DecodeDisplayInfo(const ParsedFt8Message &parsed,
         if (cty.valid) {
             info.country = cty.entity.name;
             info.countryDxcc = cty.entity.dxcc;
-            info.countryTooltip = QStringLiteral("DXCC %1, %2, prefix %3, CQ %4, ITU %5")
+            info.countryTooltip = QStringLiteral("DXCC %1 (%6), %2, prefix %3, CQ %4, ITU %5")
                                       .arg(cty.entity.dxcc,
                                            cty.entity.continent,
                                            cty.matchedToken,
                                            QString::number(cty.entity.cqZone),
-                                           QString::number(cty.entity.ituZone));
+                                           QString::number(cty.entity.ituZone),
+                                           cty.entity.primaryPrefix);
         }
     }
 
@@ -1643,6 +1650,75 @@ MainWindow::MainWindow(QWidget *parent)
     appendLog("Settings file: " + AppSettings::settingsFilePath());
     appendLog("Receiver is ready. Use Status → ▶ RX to start live decoding, or analyze a WAV test file from the mode panel.");
     updateMainStateButton();
+    restoreLastSession();
+}
+
+// PSK Reporter (taken over from JTDX, see network/PskReporter.h): a station
+// that sent its locator, with the dial of the receive period. Not for WAV
+// analysis, not for stations cty.dat does not know (unallocated prefixes).
+void MainWindow::spotFt8ToPskReporter(const Ft8RxDecoder::Decode &decode, const QString &call,
+                                      const QString &grid, const QString &mode)
+{
+    const QString myCall = stationCallsign();
+    const QString myGrid = stationLocator();
+    if (myCall.isEmpty() || myGrid.size() < 4) return;
+    if (mode != QLatin1String("FT8") && mode != QLatin1String("FT4")) return;
+    const qint64 frequencyHz = m_lastRxDialHz > 0 ? qint64(std::llround(m_lastRxDialHz)) + decode.frequencyHz : 0;
+    const QString station = AdifLogbook::normalizeCallsign(call);
+    if (!PskReport::isReportable(station, grid, frequencyHz, myCall)) return;
+    if (!CtyCountryFile::instance().lookupCallsign(station).valid) return;
+    if (m_pskReporter == nullptr) m_pskReporter = new PskReporter(this);
+    m_pskReporter->setLocalStation({myCall, myGrid, m_settings.antennaForBand(bandFromFrequencyHz(double(frequencyHz))),
+        QStringLiteral("%1 %2 build %3").arg(ProductName::longName(), QStringLiteral(MADMODEM_VERSION_STRING),
+                                             QString::fromLatin1(MadModemBuild::number()))});
+    PskReport::Spot spot;
+    spot.call = station;
+    spot.grid = grid.trimmed().toUpper();
+    spot.frequencyHz = frequencyHz;
+    spot.mode = mode;
+    spot.snr = decode.snrDb;
+    spot.unixTime = quint32(QDateTime::currentSecsSinceEpoch());
+    m_pskReporter->addSpot(spot);
+}
+
+// Headless test runs (offscreen/minimal platform) share settings.mad with the
+// operator's build; they must neither change nor follow the remembered session.
+static bool sessionMemoryEnabled()
+{
+    const QString platform = QGuiApplication::platformName();
+    return platform != QLatin1String("offscreen") && platform != QLatin1String("minimal");
+}
+
+// Start in the mode used last and resume RX if it was running at close.
+// TX is never resumed.
+void MainWindow::restoreLastSession()
+{
+    if (!sessionMemoryEnabled() || ui == nullptr || ui->cmbMode == nullptr) return;
+    QSettings settings(AppSettings::settingsFilePath(), QSettings::IniFormat);
+    const QString mode = settings.value(QStringLiteral("Session/lastMode")).toString();
+    if (!mode.isEmpty() && ui->cmbMode->findText(mode) >= 0 && ui->cmbMode->currentText() != mode) {
+        ui->cmbMode->setCurrentText(mode);
+    }
+    if (settings.value(QStringLiteral("Session/rxRunning"), false).toBool()) {
+        // After the window is shown and the audio backend has settled.
+        QTimer::singleShot(1500, this, [this]() {
+            if (!m_rxRunning && !m_runtimeShutdownComplete) {
+                appendLog(QStringLiteral("RX was running when the program was closed: starting RX."));
+                startRx();
+            }
+        });
+    }
+}
+
+void MainWindow::saveLastSession()
+{
+    if (!sessionMemoryEnabled() || ui == nullptr || ui->cmbMode == nullptr) return;
+    QSettings settings(AppSettings::settingsFilePath(), QSettings::IniFormat);
+    settings.setValue(QStringLiteral("Session/lastMode"), ui->cmbMode->currentText());
+    settings.setValue(QStringLiteral("Session/rxRunning"), m_rxRunning);
+    settings.setValue(QStringLiteral("Session/windowGeometry"), saveGeometry());
+    settings.setValue(QStringLiteral("Session/windowMaximized"), isMaximized() || isFullScreen());
+    settings.sync();
 }
 
 MainWindow::~MainWindow()
@@ -1701,6 +1777,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
     if (event != nullptr) {
         event->accept();
     }
+    saveLastSession();
+    if (m_pskReporter != nullptr) m_pskReporter->sendReport();
     // Remove the cockpit from the desktop before waiting for worker teardown.
     // Even when a backend needs the bounded emergency path, Close must feel
     // immediate instead of leaving a frozen window visible.
@@ -2392,7 +2470,7 @@ void MainWindow::setupCustomWidgets()
     if(m_settings.sstvOutputFolder.isEmpty()) {
         QString pictures=QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
         if(pictures.isEmpty())pictures=QDir::homePath();
-        m_settings.sstvOutputFolder=QDir(pictures).filePath(QStringLiteral("MadModem/SSTV"));
+        m_settings.sstvOutputFolder=QDir(pictures).filePath(QStringLiteral("MultiModeModem/SSTV"));
     }
     m_sstvImageArchive->configure(m_settings.sstvAutoSave,m_settings.sstvOutputFolder);
     auto *archiveControls=new QWidget(ui->grpSstvSettings);
@@ -8704,12 +8782,73 @@ void MainWindow::setupFt8Page()
         daysAction->setDefaultWidget(daysRow);
         filterMenu->addAction(daysAction);
     }
+    // JTDX "Hide messages from countries": DXCC primary prefixes (cty.dat).
+    m_actFt8FilterCountries = filterMenu->addAction(uiText("ft_filter_countries", "Hide countries"));
+    m_actFt8FilterCountries->setCheckable(true);
+    m_actFt8FilterCountries->setChecked(m_settings.ftDecodeFilterCountries);
+    m_actFt8FilterCountries->setToolTip(uiText("ft_filter_countries_tooltip", "Hides stations from the DXCC countries listed below. Stations on the watch list stay visible."));
+    {
+        QWidget *countriesRow = new QWidget(filterMenu);
+        QHBoxLayout *countriesLayout = new QHBoxLayout(countriesRow);
+        countriesLayout->setContentsMargins(24, 2, 8, 4);
+        countriesLayout->setSpacing(6);
+        m_editFt8FilterCountries = new QLineEdit(countriesRow);
+        m_editFt8FilterCountries->setObjectName(QStringLiteral("editFt8FilterCountries"));
+        m_editFt8FilterCountries->setMinimumWidth(220);
+        m_editFt8FilterCountries->setValidator(new QRegularExpressionValidator(
+            QRegularExpression(QStringLiteral("[A-Za-z0-9,/* ]*")), m_editFt8FilterCountries));
+        m_editFt8FilterCountries->setText(FtDecodeFilter::countryPrefixList(m_settings.ftDecodeFilterCountryList).join(QLatin1Char(',')));
+        m_editFt8FilterCountries->setToolTip(uiText("ft_filter_country_list_tooltip", "Comma separated DXCC prefixes as in cty.dat, e.g. UA,UA9,JA or DL,F,I. The prefix of a station is shown in the tooltip of the Country column."));
+        countriesLayout->addWidget(m_editFt8FilterCountries, 1);
+        QWidgetAction *countriesAction = new QWidgetAction(filterMenu);
+        countriesAction->setDefaultWidget(countriesRow);
+        filterMenu->addAction(countriesAction);
+        connect(m_editFt8FilterCountries, &QLineEdit::textEdited, this, [this](const QString &text) {
+            const int pos = m_editFt8FilterCountries->cursorPosition();
+            m_editFt8FilterCountries->setText(text.toUpper());
+            m_editFt8FilterCountries->setCursorPosition(pos);
+        });
+    }
+    // JTDX "Hide messages from continents".
+    m_menuFt8FilterContinents = filterMenu->addMenu(uiText("ft_filter_continents", "Hide continents"));
+    m_menuFt8FilterContinents->setToolTipsVisible(true);
+    m_menuFt8FilterContinents->setToolTip(uiText("ft_filter_continents_tooltip", "Hides stations from the ticked continents (cty.dat). Stations on the watch list stay visible."));
+    {
+        const QStringList hiddenContinents = FtDecodeFilter::continentList(m_settings.ftDecodeFilterContinentList);
+        const QStringList continentNames = {
+            uiText("continent_af", "Africa"), uiText("continent_an", "Antarctica"), uiText("continent_as", "Asia"),
+            uiText("continent_eu", "Europe"), uiText("continent_na", "North America"),
+            uiText("continent_oc", "Oceania"), uiText("continent_sa", "South America")};
+        const QStringList &codes = FtDecodeFilter::continentCodes();
+        for (int i = 0; i < codes.size(); ++i) {
+            QAction *action = m_menuFt8FilterContinents->addAction(
+                QStringLiteral("%1  %2").arg(codes.at(i), continentNames.value(i)));
+            action->setCheckable(true);
+            action->setData(codes.at(i));
+            action->setChecked(hiddenContinents.contains(codes.at(i)));
+            m_actFt8FilterContinents << action;
+        }
+    }
     filterMenu->setToolTipsVisible(true);
     m_btnFt8DecodeFilter->setMenu(filterMenu);
     const auto filterChanged = [this]() {
         m_settings.ftDecodeFilterCqEnd = m_actFt8FilterCqEnd->isChecked();
         m_settings.ftDecodeFilterWorked = m_actFt8FilterWorked->isChecked();
         m_settings.ftDecodeFilterWorkedDays = m_spinFt8FilterWorkedDays->value();
+        m_settings.ftDecodeFilterCountryList =
+            FtDecodeFilter::countryPrefixList(m_editFt8FilterCountries->text()).join(QLatin1Char(','));
+        // Typing a list switches the filter on, emptying it switches it off (JTDX).
+        if (sender() == m_editFt8FilterCountries) {
+            const QSignalBlocker block(m_actFt8FilterCountries);
+            m_actFt8FilterCountries->setChecked(!m_settings.ftDecodeFilterCountryList.isEmpty());
+        }
+        m_settings.ftDecodeFilterCountries = m_actFt8FilterCountries->isChecked() &&
+                                             !m_settings.ftDecodeFilterCountryList.isEmpty();
+        QStringList hiddenContinents;
+        for (const QAction *action : std::as_const(m_actFt8FilterContinents)) {
+            if (action->isChecked()) hiddenContinents << action->data().toString();
+        }
+        m_settings.ftDecodeFilterContinentList = hiddenContinents.join(QLatin1Char(','));
         updateFt8DecodeFilterButton();
         applyFt8DecodeFilter();
         m_settings.save();
@@ -8717,6 +8856,11 @@ void MainWindow::setupFt8Page()
     connect(m_actFt8FilterCqEnd, &QAction::toggled, this, filterChanged);
     connect(m_actFt8FilterWorked, &QAction::toggled, this, filterChanged);
     connect(m_spinFt8FilterWorkedDays, QOverload<int>::of(&QSpinBox::valueChanged), this, filterChanged);
+    connect(m_actFt8FilterCountries, &QAction::toggled, this, filterChanged);
+    connect(m_editFt8FilterCountries, &QLineEdit::editingFinished, this, filterChanged);
+    for (QAction *action : std::as_const(m_actFt8FilterContinents)) {
+        connect(action, &QAction::toggled, this, filterChanged);
+    }
     updateFt8DecodeFilterButton();
     rxToolsLayout->addWidget(m_btnFt8DecodeFilter);
     rxToolsLayout->addStretch(1);
@@ -10155,13 +10299,14 @@ void MainWindow::loadUiTranslationFile(const QString &languageCode)
         const QString key = line.left(eq).trimmed();
         QString value = line.mid(eq + 1).trimmed();
         value.replace(QStringLiteral("\\n"), QStringLiteral("\n"));
-        m_uiTranslations.insert(key, value);
+        m_uiTranslations.insert(key, ProductName::brand(value));
     }
 }
 
 QString MainWindow::uiText(const QString &key, const QString &fallback) const
 {
-    return m_uiTranslations.value(key, fallback);
+    const auto it = m_uiTranslations.constFind(key);
+    return it != m_uiTranslations.constEnd() ? it.value() : ProductName::brand(fallback);
 }
 
 QString MainWindow::uiTextFromSource(const QString &prefix, const QString &source) const
@@ -10216,7 +10361,7 @@ QString MainWindow::uiTextFromSource(const QString &prefix, const QString &sourc
         }
     }
 
-    return source;
+    return ProductName::brand(source);
 }
 
 QString MainWindow::localizedRuntimeText(const QString &prefix, const QString &message) const
@@ -12102,6 +12247,7 @@ void MainWindow::handleRigFrequencyChanged(double frequencyHz)
 {
     const double previousFrequencyHz = m_lastRigFrequencyHz;
     m_lastRigFrequencyHz = frequencyHz;
+    if (!m_lastRigPttOn && !m_ftSplitPreparedForTx) m_lastRxDialHz = frequencyHz;
     if (m_ft8RxDecoder) m_ft8RxDecoder->setRadioFrequencyHz(frequencyHz);
     if (previousFrequencyHz > 0 && qAbs(frequencyHz - previousFrequencyHz) >= 1.0 &&
         m_settings.cwSkimmerEnabled && ui->cmbMode->currentText() == CwDecoder::modeName()) {
@@ -19071,7 +19217,10 @@ bool MainWindow::ft8DecodeRowPassesFilter(int row) const
 {
     const bool cqEnd = m_settings.ftDecodeFilterCqEnd;
     const bool worked = m_settings.ftDecodeFilterWorked;
-    if (m_tableFt8Rx == nullptr || (!cqEnd && !worked)) {
+    const bool countries = m_settings.ftDecodeFilterCountries;
+    const QStringList hiddenContinents = FtDecodeFilter::continentList(m_settings.ftDecodeFilterContinentList);
+    const bool continents = !hiddenContinents.isEmpty();
+    if (m_tableFt8Rx == nullptr || (!cqEnd && !worked && !countries && !continents)) {
         return true;
     }
     const QTableWidgetItem *messageItem = m_tableFt8Rx->item(row, 4);
@@ -19093,6 +19242,15 @@ bool MainWindow::ft8DecodeRowPassesFilter(int row) const
     if (cqEnd && !FtDecodeFilter::passesCqEnd(message, myCall)) {
         return false;
     }
+    if (countries && !messageItem->data(kFtWatchedRole).toBool() &&
+        FtDecodeFilter::hiddenByCountry(messageItem->data(kFtCountryPrefixRole).toString(),
+                                        FtDecodeFilter::countryPrefixList(m_settings.ftDecodeFilterCountryList))) {
+        return false;   // JTDX "Hide messages from countries"; watched stations stay
+    }
+    if (continents && !messageItem->data(kFtWatchedRole).toBool() &&
+        FtDecodeFilter::hiddenByContinent(messageItem->data(kFtContinentRole).toString(), hiddenContinents)) {
+        return false;   // JTDX "Hide messages from continents"; watched stations stay
+    }
     if (worked) {
         const qint64 pendingSince = messageItem->data(kFtLogPendingSinceRole).toLongLong();
         if (pendingSince > 0 && QDateTime::currentMSecsSinceEpoch() - pendingSince < kFtLogPendingHideMs) {
@@ -19113,7 +19271,9 @@ void MainWindow::updateFt8DecodeFilterButton()
     if (m_btnFt8DecodeFilter == nullptr) {
         return;
     }
-    const int active = (m_settings.ftDecodeFilterCqEnd ? 1 : 0) + (m_settings.ftDecodeFilterWorked ? 1 : 0);
+    const int active = (m_settings.ftDecodeFilterCqEnd ? 1 : 0) + (m_settings.ftDecodeFilterWorked ? 1 : 0) +
+                       (m_settings.ftDecodeFilterCountries ? 1 : 0) +
+                       (FtDecodeFilter::continentList(m_settings.ftDecodeFilterContinentList).isEmpty() ? 0 : 1);
     const QString title = uiText("ft_filter", "Filter");
     m_btnFt8DecodeFilter->setText(active > 0 ? QStringLiteral("%1 (%2) ▾").arg(title).arg(active)
                                              : title + QStringLiteral(" ▾"));
@@ -19122,6 +19282,10 @@ void MainWindow::updateFt8DecodeFilterButton()
     m_btnFt8DecodeFilter->setFont(f);
     if (m_spinFt8FilterWorkedDays != nullptr) {
         m_spinFt8FilterWorkedDays->setEnabled(m_settings.ftDecodeFilterWorked);
+    }
+    if (m_actFt8FilterCountries != nullptr) {
+        const QSignalBlocker block(m_actFt8FilterCountries);
+        m_actFt8FilterCountries->setChecked(m_settings.ftDecodeFilterCountries);
     }
 }
 
@@ -19170,6 +19334,8 @@ void MainWindow::styleFt8DecodeRow(int row, QVariantList *missingQueries, QSet<Q
         grid4 = ft8MaidenheadGrid4(grid);
         const CtyCountryFile::LookupResult cty = CtyCountryFile::instance().lookupCallsign(station);
         if (cty.valid) country = cty.entity.name;
+        messageItem->setData(kFtCountryPrefixRole, cty.valid ? cty.entity.primaryPrefix : QString());
+        messageItem->setData(kFtContinentRole, cty.valid ? cty.entity.continent : QString());
         const QString band = (m_cmbFt8Band != nullptr) ? m_cmbFt8Band->currentText().trimmed().toLower()
                                                        : m_settings.ft8Band.trimmed().toLower();
         const QVariantMap query = makeFtLogbookQuery(station, band, currentAdifMode().trimmed().toUpper(),
@@ -19281,6 +19447,7 @@ void MainWindow::styleFt8DecodeRow(int row, QVariantList *missingQueries, QSet<Q
     messageItem->setToolTip(tip);
     messageItem->setData(kFtWorkedRole, log.known && log.callWorked);
     messageItem->setData(kFtLastQsoUtcRole, log.lastQsoUtc);
+    messageItem->setData(kFtWatchedRole, !station.isEmpty() && isFtCallWatched(station));
     if (log.known || station.isEmpty()) {
         messageItem->setData(kFtLogPendingSinceRole, QVariant());
     } else if (messageItem->data(kFtLogPendingSinceRole).toLongLong() <= 0) {
@@ -19790,6 +19957,12 @@ void MainWindow::handleFt8DecodeReady(const Ft8RxDecoder::Decode &decode)
         m_ftCqWorkList.observe(heard.trimmed().toUpper(), parsed.cq, decode,
             ui->cmbMode->currentText().trimmed().toUpper(),
             m_cmbFt8Band ? m_cmbFt8Band->currentText().trimmed().toLower() : m_settings.ft8Band);
+    }
+    if (!presentationOnly && m_settings.pskReporterEnabled && !m_offlineAnalysisActive) {
+        // The station the locator belongs to: the CQ caller or the sender.
+        const QString spotCall = parsed.cq ? ft8CqCallsignFromMessage(parsed) : parsed.senderCall;
+        if (!FtDecodedText::isAckLikeGridTrap(parsed.grid.left(4)))
+            spotFt8ToPskReporter(decode, spotCall, parsed.grid, ftDisplayMode);
     }
     const bool directReplyToMe = isFt8DirectReplyToMyCall(parsed, myCall);
     if (!presentationOnly && directReplyToMe && (parsed.rr73 || parsed.rrr || parsed.final73)) {
@@ -20770,7 +20943,7 @@ QString MainWindow::expandTextTemplate(const QString &source) const
     replaceToken("RST_RCVD", qsoRstRcvd);
     replaceToken("BAND", qsoBand);
     replaceToken("RIG", m_settings.textRig);
-    replaceToken("ANT", m_settings.textAntenna);
+    replaceToken("ANT", m_settings.antennaForBand(qsoBand.isEmpty() ? bandFromFrequencyHz(m_lastRigFrequencyHz) : qsoBand));
     replaceToken("PWR", m_settings.textPower);
     replaceToken("MODE", qsoMode);
     replaceToken("DATE", now.date().toString("yyyy-MM-dd"));
@@ -23551,9 +23724,11 @@ void MainWindow::showAboutMadModem()
     header->addWidget(icon, 0, Qt::AlignTop);
 
     QLabel *title = new QLabel(QStringLiteral(
-        "<b>%1</b><br>"
-        "Amateur radio digital modem and station hub.")
-        .arg(QStringLiteral(MADMODEM_VERSION_DISPLAY)), &dialog);
+        "<b>%1 (%2) %3</b><br>"
+        "Amateur radio digital modem and station hub.<br>"
+        "Based on MadModem %3.")
+        .arg(ProductName::longName(), ProductName::shortName(),
+             QStringLiteral(MADMODEM_VERSION_STRING)), &dialog);
     title->setTextFormat(Qt::RichText);
     title->setWordWrap(true);
     header->addWidget(title, 1);
@@ -23563,9 +23738,12 @@ void MainWindow::showAboutMadModem()
     body->setTextFormat(Qt::RichText);
     body->setWordWrap(true);
     body->setText(QStringLiteral(
-        "<p><b>Author:</b> Papadopol Lucian-Ioan, IZ6NNH<br>"
+        "<p><b>MadModem author:</b> Papadopol Lucian-Ioan, IZ6NNH<br>"
         "<b>Website:</b> www.madexp.it<br>"
         "<b>License:</b> GPLv3</p>"
+        "<p><b>MultiModeModem:</b> fork by DO3BOX, "
+        "github.com/mi-gri/MadModem-3box. Decode display and filters "
+        "follow JTDX; FT protocols by the WSJT-X authors.</p>"
         "<p><b>Principal tester:</b> IK7IMK Nick<br>"
         "Testing, valuable advice and new ideas.</p>"
         "<p><b>Modes:</b> FT8/FT4, CW, RTTY, BPSK/QPSK, MFSK, "
@@ -24170,7 +24348,7 @@ void MainWindow::startRxAudioRecording()
     mode.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9_-]+")),
                  QStringLiteral("_"));
     const QString suggested = QDir(directory).filePath(
-        QStringLiteral("MadModem_RX_%1_%2.wav")
+        QStringLiteral("MultiModeModem_RX_%1_%2.wav")
             .arg(QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd_HHmmss")),
                  mode));
     const QString fileName = QFileDialog::getSaveFileName(

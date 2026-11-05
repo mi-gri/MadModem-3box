@@ -41,7 +41,7 @@ static void checkClock(MainWindow& window) {
 }
 
 int main(int argc,char** argv) {
-    QApplication app(argc,argv); app.setApplicationName("MadModem");
+    QApplication app(argc,argv); app.setApplicationName("MultiModeModem");
     QSettings settings(AppSettings::settingsFilePath(),QSettings::IniFormat);
     settings.setValue("Updates/checkAtStartup",false);
     settings.setValue("UI/language","it");

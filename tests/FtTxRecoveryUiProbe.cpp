@@ -16,7 +16,7 @@
 static void require(bool ok,const char *why){if(!ok){std::cerr<<"FAIL: "<<why<<std::endl;throw std::runtime_error(why);}}
 static void pump(){QElapsedTimer t;t.start();while(t.elapsed()<80){QCoreApplication::processEvents();QThread::msleep(1);}}
 int main(int argc,char **argv){
- QApplication app(argc,argv);app.setApplicationName("MadModem");
+ QApplication app(argc,argv);app.setApplicationName("MultiModeModem");
  QSettings settings(AppSettings::settingsFilePath(),QSettings::IniFormat);settings.setValue("Updates/checkAtStartup",false);settings.sync();
  MainWindow w;w.m_settings.pttMethod="none";
  // Model an already active RX capture; no test may open a physical device.

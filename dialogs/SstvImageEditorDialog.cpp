@@ -1048,7 +1048,7 @@ void SstvImageEditorDialog::syncDocumentControls()
 void SstvImageEditorDialog::openProject()
 {
     if (!confirmDiscard()) return;
-    const QString path=QFileDialog::getOpenFileName(this,L18n("Open project..."),QString(),"MadModem SSTV (*.mmsstv)");
+    const QString path=QFileDialog::getOpenFileName(this,L18n("Open project..."),QString(),"MultiModeModem SSTV (*.mmsstv)");
     if (path.isEmpty()) return;
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly) || file.size()>64*1024*1024 || !restoreProject(file.readAll()))
@@ -1056,7 +1056,7 @@ void SstvImageEditorDialog::openProject()
 }
 void SstvImageEditorDialog::saveProject()
 {
-    const QString path=QFileDialog::getSaveFileName(this,L18n("Save project..."),"SSTV.mmsstv","MadModem SSTV (*.mmsstv)");
+    const QString path=QFileDialog::getSaveFileName(this,L18n("Save project..."),"SSTV.mmsstv","MultiModeModem SSTV (*.mmsstv)");
     if (path.isEmpty()) return;
     QSaveFile file(path);const QByteArray data=projectData();
     if (!file.open(QIODevice::WriteOnly) || file.write(data)!=data.size() || !file.commit()) {

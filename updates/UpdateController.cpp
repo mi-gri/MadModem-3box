@@ -1,3 +1,4 @@
+#include "utils/ProductName.h"
 #include "UpdateController.h"
 #include "../MadModemVersion.h"
 #include "MadModemBuildInfo.h"
@@ -240,7 +241,7 @@ void UpdateController::fetchReleasePage(int page) {
             m_busy = false;
             if (m_manual) {
                 const QString newest = identity.version.isEmpty() ? QStringLiteral("—") : versionLabel(identity.version, identity.build);
-                QMessageBox::information(m_window, "MadModem", uiText("update_current_published", "No newer published release is available.\n\nInstalled: %1\nNewest published: %2")
+                QMessageBox::information(m_window, ProductName::longName(), uiText("update_current_published", "No newer published release is available.\n\nInstalled: %1\nNewest published: %2")
                     .arg(versionLabel(QStringLiteral(MADMODEM_VERSION_STRING), localBuild), newest));
             }
             return;
@@ -288,7 +289,7 @@ void UpdateController::offer(const QJsonObject& release) {
             if (sums.isEmpty()) reason = uiText("update_missing_checksums", "The release has no SHA256SUMS.txt file to verify downloads.");
             else if (names.isEmpty()) reason = uiText("update_unknown_bundle", "The Linux package type could not be identified. Download the package for your distribution.");
             else reason = uiText("update_missing_compatible_package", "The release has no compatible package. Expected: %1").arg(names.join(QStringLiteral("\n")));
-            QMessageBox::information(m_window, "MadModem", uiText("update_manual_download_reason", "A newer release is available. %1\n\nOpening the release page.").arg(reason));
+            QMessageBox::information(m_window, ProductName::longName(), uiText("update_manual_download_reason", "A newer release is available. %1\n\nOpening the release page.").arg(reason));
             QDesktopServices::openUrl(QUrl(repository + "/releases"));
         }
         return;
@@ -299,7 +300,7 @@ void UpdateController::offer(const QJsonObject& release) {
     QString message = uiText("update_offer", "MadModem %1 is available. Download the update?\n\nCurrent version: %2\nPackage: %3").arg(versionLabel(m_version, m_releaseBuild), versionLabel(QStringLiteral(MADMODEM_VERSION_STRING), QStringLiteral(MADMODEM_BUILD_NUMBER).toULongLong()), name);
     if (release.value("prerelease").toBool()) message += "\n\n" + uiText("update_prerelease", "This is a pre-release.");
     message += "\n\n" + (m_managed ? uiText("update_installer_info", "After verification, you can close MM and start the installer. Settings and logbooks are preserved; the installer may request license acceptance or system permission.") : uiText("update_portable_info", "The portable copy will remain portable. After confirmation MM closes, a full backup is kept beside the program folder, the package is replaced and MM restarts."));
-    if (QMessageBox::question(m_window, "MadModem", message, QMessageBox::Yes|QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) { m_busy = false; return; }
+    if (QMessageBox::question(m_window, ProductName::longName(), message, QMessageBox::Yes|QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) { m_busy = false; return; }
     if (m_cancelled || !m_idle()) { m_busy = false; return; }
     m_manual = true;
     fetch(sumsUrl, 1024*1024, [this, url, name, size](const QByteArray& bytes) {
@@ -332,7 +333,7 @@ void UpdateController::download(const QUrl& url, const QString& name, const QByt
     connect(timer, &QTimer::timeout, reply, &QNetworkReply::abort);
     connect(totalTimer, &QTimer::timeout, reply, &QNetworkReply::abort);
     m_progress = new QProgressDialog(uiText("update_downloading", "Downloading update…"), uiText("update_cancel", "Cancel"), 0, 100, m_window);
-    m_progress->setWindowTitle("MadModem"); m_progress->setAutoClose(false); m_progress->setMinimumDuration(0);
+    m_progress->setWindowTitle(ProductName::longName()); m_progress->setAutoClose(false); m_progress->setMinimumDuration(0);
     connect(m_progress, &QProgressDialog::canceled, this, [this, reply] { m_cancelled = true; reply->abort(); });
     connect(reply, &QNetworkReply::readyRead, this, [this, reply, file, hash, received, size, timer] {
         timer->start(60000);
@@ -349,8 +350,8 @@ void UpdateController::download(const QUrl& url, const QString& name, const QByt
         reply->deleteLater();
         if (m_cancelled) { m_busy = false; return; }
         if (!ok || !file->commit()) { fail(uiText("update_corrupt", "Download failed or checksum mismatch. No program files were changed.")); return; }
-        if (!m_idle()) { m_busy = false; QMessageBox::information(m_window, "MadModem", uiText("update_wait", "Update downloaded. Stop active operations before installing it from the download folder.") + "\n" + m_directory); return; }
-        if (QMessageBox::question(m_window, "MadModem", uiText("update_install", "Download verified. Close MadModem and apply the update now?"), QMessageBox::Yes|QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) { m_busy = false; return; }
+        if (!m_idle()) { m_busy = false; QMessageBox::information(m_window, ProductName::longName(), uiText("update_wait", "Update downloaded. Stop active operations before installing it from the download folder.") + "\n" + m_directory); return; }
+        if (QMessageBox::question(m_window, ProductName::longName(), uiText("update_install", "Download verified. Close MadModem and apply the update now?"), QMessageBox::Yes|QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) { m_busy = false; return; }
         if (!m_idle()) { m_busy = false; return; }
         if (launch(path, sha)) { m_window->close(); m_busy = false; }
         else fail(uiText("update_launch_failed", "Could not start the updater. The current installation is unchanged.") + "\n" + path);
@@ -358,7 +359,7 @@ void UpdateController::download(const QUrl& url, const QString& name, const QByt
 }
 void UpdateController::fail(const QString& message) {
     m_busy = false;
-    if (m_manual && !m_cancelled) QMessageBox::warning(m_window, "MadModem", message);
+    if (m_manual && !m_cancelled) QMessageBox::warning(m_window, ProductName::longName(), message);
 }
 bool UpdateController::launch(const QString& path, const QByteArray& sha) {
     const QString appDir = QCoreApplication::applicationDirPath();

@@ -89,7 +89,7 @@ bool SessionDiagnostics::start(const QString &folder) {
         std::lock_guard<std::mutex> l(m_mutex);
         m_queue.clear();m_bytes=0;m_sequence=0;m_lost=0;m_flushRequest=0;m_flushDone=0;m_stopping=false;m_ready=false;m_error.clear();
         const QString destination=folder.trimmed().isEmpty()?defaultFolder():QDir(folder).absolutePath();
-        m_path=QDir(destination).filePath("MadModem_"+QDateTime::currentDateTimeUtc().toString("yyyyMMdd_HHmmss_zzz")+"_"+QUuid::createUuid().toString(QUuid::WithoutBraces)+".jsonl.gz");
+        m_path=QDir(destination).filePath("MultiModeModem_"+QDateTime::currentDateTimeUtc().toString("yyyyMMdd_HHmmss_zzz")+"_"+QUuid::createUuid().toString(QUuid::WithoutBraces)+".jsonl.gz");
     }
     m_thread=std::thread([this]{run();});
     {std::unique_lock<std::mutex> l(m_mutex);m_cv.wait(l,[this]{return m_ready;});if(!m_error.isEmpty())return false;m_active.store(true);}

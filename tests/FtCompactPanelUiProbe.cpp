@@ -17,7 +17,7 @@
 #include <stdexcept>
 static void check(bool b,const char*why){if(!b)throw std::runtime_error(why);}
 static void settle(){QEventLoop loop;QTimer::singleShot(150,&loop,&QEventLoop::quit);loop.exec();}
-int main(int argc,char**argv){QApplication app(argc,argv);app.setApplicationName("MadModem");
+int main(int argc,char**argv){QApplication app(argc,argv);app.setApplicationName("MultiModeModem");
  QSettings settings(AppSettings::settingsFilePath(),QSettings::IniFormat);settings.setValue("Updates/checkAtStartup",false);settings.setValue("UI/language","it");settings.sync();
  MainWindow w;w.show();w.ui->sideTabWidget->setCurrentWidget(w.ui->tabModeSettings);
  for(QString mode:{QString("FT8"),QString("FT4")}){

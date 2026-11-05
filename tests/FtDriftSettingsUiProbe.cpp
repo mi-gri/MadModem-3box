@@ -14,7 +14,7 @@
 static void check(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
 int main(int argc, char **argv)
 {
-    QApplication app(argc, argv); app.setApplicationName("MadModem");
+    QApplication app(argc, argv); app.setApplicationName("MultiModeModem");
     QSettings settings(AppSettings::settingsFilePath(), QSettings::IniFormat);
     settings.setValue("Updates/checkAtStartup", false); settings.sync();
     MainWindow window;

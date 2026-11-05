@@ -1065,7 +1065,7 @@ void QsoMapWidget::requestOsmTile(const TileSpec &tile) const
     m_osmLastSslError.clear();
 
     QNetworkRequest request(url);
-    request.setRawHeader("User-Agent", "MadModem/2.00 (QSO-map; GPL-3.0; contact=IZ6NNH)");
+    request.setRawHeader("User-Agent", "MultiModeModem/2.00 (QSO-map, based on MadModem; GPL-3.0; contact=DO3BOX)");
     request.setRawHeader("Accept", "image/png,image/*;q=0.8,*/*;q=0.5");
 #if QT_VERSION >= QT_VERSION_CHECK(5, 9, 0)
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,

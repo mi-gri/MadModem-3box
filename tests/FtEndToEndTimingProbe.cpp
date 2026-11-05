@@ -20,7 +20,7 @@
 #include <stdexcept>
 static void need(bool v,const char *why){if(!v)throw std::runtime_error(why);}
 int main(int argc,char **argv){
- QApplication app(argc,argv);app.setApplicationName("MadModem");
+ QApplication app(argc,argv);app.setApplicationName("MultiModeModem");
  QSettings settings(AppSettings::settingsFilePath(),QSettings::IniFormat);
  settings.setValue("Updates/checkAtStartup",false);settings.sync();
  MainWindow w;w.show();app.processEvents();

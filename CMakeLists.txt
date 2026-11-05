@@ -634,6 +634,7 @@ add_executable(MadModem
     logbook/AdifLogbook.cpp
     network/QsoUdpBroadcaster.h
     network/QsoUdpBroadcaster.cpp
+    network/PskReporter.cpp
     dxcc/CtyCountryFile.h
     dxcc/CtyCountryFile.cpp
 )
@@ -684,7 +685,7 @@ if(APPLE AND MADMODEM_MACOS_BUNDLE)
 
     set_target_properties(MadModem PROPERTIES
         MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "MadModem"
+        MACOSX_BUNDLE_BUNDLE_NAME "MultiModeModem"
         MACOSX_BUNDLE_GUI_IDENTIFIER "${MADMODEM_MACOS_BUNDLE_ID}"
         MACOSX_BUNDLE_ICON_FILE "MadModem.icns"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/Info.plist.in"
@@ -697,7 +698,7 @@ if(APPLE AND MADMODEM_MACOS_BUNDLE)
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/cty.csv"
                 "$<TARGET_BUNDLE_CONTENT_DIR:MadModem>/MacOS/cty.csv"
-            COMMENT "Copying cty.csv into MadModem.app/Contents/MacOS"
+            COMMENT "Copying cty.csv into MultiModeModem.app/Contents/MacOS"
             VERBATIM
         )
     endif()
@@ -1077,6 +1078,10 @@ endif()
 # Install
 # -------------------------------------------------------------------------
 
+# MultiModeModem (m³): the target stays "MadModem" (upstream merges, test
+# scripts use CMakeFiles/MadModem.dir); the program file is MultiModeModem.
+set_target_properties(MadModem PROPERTIES OUTPUT_NAME MultiModeModem)
+
 install(TARGETS MadModem
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     BUNDLE DESTINATION .
@@ -1286,7 +1291,7 @@ endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/rtty_rules")
     if(APPLE)
-        install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/rtty_rules" DESTINATION "MadModem.app/Contents/MacOS")
+        install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/rtty_rules" DESTINATION "MultiModeModem.app/Contents/MacOS")
     else()
         install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/rtty_rules" DESTINATION "${CMAKE_INSTALL_BINDIR}")
     endif()
@@ -1294,7 +1299,7 @@ endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cw_rules")
     if(APPLE)
-        install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cw_rules" DESTINATION "MadModem.app/Contents/MacOS")
+        install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cw_rules" DESTINATION "MultiModeModem.app/Contents/MacOS")
     else()
         install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cw_rules" DESTINATION "${CMAKE_INSTALL_BINDIR}")
     endif()
@@ -1303,7 +1308,7 @@ endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cty.csv")
     if(APPLE AND MADMODEM_MACOS_BUNDLE)
         install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cty.csv"
-            DESTINATION MadModem.app/Contents/MacOS
+            DESTINATION MultiModeModem.app/Contents/MacOS
         )
     else()
         install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cty.csv"
@@ -1321,9 +1326,9 @@ if(UNIX AND NOT APPLE)
     endforeach()
     install(FILES icons/madmodem_256.png
         DESTINATION share/icons/hicolor/256x256/apps
-        RENAME MadModem.png
+        RENAME MultiModeModem.png
     )
-    install(FILES MadModem.desktop
+    install(FILES MultiModeModem.desktop
         DESTINATION share/applications
     )
 endif()
@@ -1456,6 +1461,12 @@ if(BUILD_TESTING)
         tests/CwNeuralProbe.cpp modems/cw/neural/CwNeuralDecoder.cpp)
     target_include_directories(madmodem_cw_neural_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     set_target_properties(madmodem_cw_neural_probe PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+
+    add_executable(madmodem_psk_reporter tests/PskReporterRegression.cpp network/PskReporter.cpp)
+    target_include_directories(madmodem_psk_reporter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(madmodem_psk_reporter PRIVATE ${QT}::Core ${QT}::Network)
+    add_test(NAME madmodem_psk_reporter COMMAND madmodem_psk_reporter)
+    set_tests_properties(madmodem_psk_reporter PROPERTIES TIMEOUT 20)
 
     add_executable(madmodem_rtty_contest_regression tests/RttyContestRegression.cpp
         modems/rtty/RttyDecoder.cpp modems/rtty/RttyMultiDecoder.cpp

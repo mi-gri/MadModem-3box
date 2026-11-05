@@ -17,7 +17,7 @@
 #include <iostream>
 #include <stdexcept>
 static void check(bool b,const char *why){if(!b)throw std::runtime_error(why);}
-int main(int argc,char **argv){QApplication app(argc,argv);app.setApplicationName("MadModem");try{
+int main(int argc,char **argv){QApplication app(argc,argv);app.setApplicationName("MultiModeModem");try{
  QSettings config(AppSettings::settingsFilePath(),QSettings::IniFormat);config.setValue("Updates/checkAtStartup",false);config.setValue("UI/language","it");config.sync();
  MainWindow w;w.resize(1280,900);w.show();w.ui->cmbMode->setCurrentText(SstvDecoder::modeName());
  w.ui->sideTabWidget->setCurrentWidget(w.ui->tabModeSettings);w.ui->cmbSstvMode->setCurrentText("Robot 24");

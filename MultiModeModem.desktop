@@ -1,11 +1,12 @@
 [Desktop Entry]
 Type=Application
-Name=MadModem
+Name=MultiModeModem (m³)
+GenericName=Amateur radio modem (based on MadModem)
 Comment=Amateur radio digital modem for WEFAX, SSTV, RTTY, BPSK, CW, Feld Hell, FT4 and FT8
-Exec=MadModem
+Exec=MultiModeModem
 Icon=madmodem
 Terminal=false
 Categories=HamRadio;Audio;Network;Utility;
 
-X-MadModem-Author=Papadopol Lucian-Ioan
+X-MadModem-Author=Papadopol Lucian-Ioan (MadModem); MultiModeModem fork: DO3BOX
 X-MadModem-Website=https://www.madexp.it

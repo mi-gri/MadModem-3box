@@ -1,4 +1,5 @@
 #include "RuntimeI18n.h"
+#include "ProductName.h"
 
 #include <QFile>
 #include <QHash>
@@ -50,6 +51,8 @@ bool looksLikeBadGeneratedValue(const QString &value, const QString &normalized,
 
 namespace MadModemI18n {
 
+QString translateSourceUnbranded(const QString &prefix, const QString &source);
+
 void setLanguageCode(const QString &languageCode)
 {
     QString code = languageCode.trimmed().toLower();
@@ -87,7 +90,7 @@ void setLanguageCode(const QString &languageCode)
         const QString key = line.left(eq).trimmed();
         QString value = line.mid(eq + 1).trimmed();
         value.replace(QStringLiteral("\\n"), QStringLiteral("\n"));
-        g_translations.insert(key, value);
+        g_translations.insert(key, ProductName::brand(value));
     }
 }
 
@@ -98,7 +101,8 @@ QString languageCode()
 
 QString translate(const QString &key, const QString &fallback)
 {
-    return g_translations.value(key, fallback);
+    const auto it = g_translations.constFind(key);
+    return it != g_translations.constEnd() ? it.value() : ProductName::brand(fallback);
 }
 
 QString translateSource(const QString &prefix, const QString &source)
@@ -107,6 +111,12 @@ QString translateSource(const QString &prefix, const QString &source)
     if (trimmed.isEmpty()) {
         return source;
     }
+    return ProductName::brand(translateSourceUnbranded(prefix, source));
+}
+
+QString translateSourceUnbranded(const QString &prefix, const QString &source)
+{
+    const QString trimmed = source.trimmed();
 
     const QString normalized = normalizeSourceKey(source);
     if (g_translations.contains(trimmed)) {

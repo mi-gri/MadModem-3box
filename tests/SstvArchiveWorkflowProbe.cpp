@@ -23,7 +23,7 @@
 #include <stdexcept>
 static void check(bool b,const char *why){if(!b)throw std::runtime_error(why);}
 static QByteArray bytes(const QString &path){QFile f(path);check(f.open(QIODevice::ReadOnly),"read saved PNG");return f.readAll();}
-int main(int argc,char **argv){QApplication app(argc,argv);app.setApplicationName("MadModem");try{
+int main(int argc,char **argv){QApplication app(argc,argv);app.setApplicationName("MultiModeModem");try{
  QTemporaryDir root;check(root.isValid(),"archive fixture directory");
  QSettings config(AppSettings::settingsFilePath(),QSettings::IniFormat);config.setValue("Updates/checkAtStartup",false);config.setValue("UI/language","it");config.setValue("SSTV/autoSave",false);config.sync();
  MainWindow w;w.resize(1280,900);w.show();w.ui->cmbMode->setCurrentText(SstvDecoder::modeName());w.ui->cmbSstvMode->setCurrentText("Robot 24");

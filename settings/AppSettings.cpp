@@ -199,6 +199,7 @@ void AppSettings::load()
     logbookUdpServer = settings.value("Logbook/udpServer", logbookUdpServer).toString().trimmed();
     if (logbookUdpServer.isEmpty()) logbookUdpServer = QStringLiteral("127.0.0.1");
     logbookUdpPort = qBound(1, settings.value("Logbook/udpPort", logbookUdpPort).toInt(), 65535);
+    pskReporterEnabled = settings.value("PskReporter/enabled", pskReporterEnabled).toBool();
     logbookVisibleFieldsConfigured = settings.value("Logbook/visibleFieldsConfigured", logbookVisibleFieldsConfigured).toBool();
     logbookVisibleFields = settings.value("Logbook/visibleFields", logbookVisibleFields).toStringList();
     for (QString &field : logbookVisibleFields) { field = field.trimmed().toUpper(); }
@@ -628,6 +629,9 @@ void AppSettings::load()
     ftDecodeFilterCqEnd = settings.value("FT8/decodeFilterCqEnd", ftDecodeFilterCqEnd).toBool();
     ftDecodeFilterWorked = settings.value("FT8/decodeFilterWorked", ftDecodeFilterWorked).toBool();
     ftDecodeFilterWorkedDays = qBound(0, settings.value("FT8/decodeFilterWorkedDays", ftDecodeFilterWorkedDays).toInt(), 3650);
+    ftDecodeFilterCountries = settings.value("FT8/decodeFilterCountries", ftDecodeFilterCountries).toBool();
+    ftDecodeFilterCountryList = settings.value("FT8/decodeFilterCountryList", ftDecodeFilterCountryList).toString();
+    ftDecodeFilterContinentList = settings.value("FT8/decodeFilterContinentList", ftDecodeFilterContinentList).toString();
     ftHighlightNewCountryEnabled = settings.value("FT8/highlightNewCountryEnabled", ftHighlightNewCountryEnabled).toBool();
     ftWatchListIconEnabled = settings.value("FT8/watchListIconEnabled", ftWatchListIconEnabled).toBool();
     ftBlacklistCalls = settings.value("FT8/blacklistCalls", ftBlacklistCalls).toStringList();
@@ -784,6 +788,14 @@ void AppSettings::load()
     settings.remove("Text/report");
     textRig = settings.value("Text/rig", textRig).toString();
     textAntenna = settings.value("Text/antenna", textAntenna).toString();
+    textAntennaByBand.clear();
+    for (const QString &entry : settings.value("Text/antennaByBand").toStringList()) {
+        const int eq = entry.indexOf(QLatin1Char('='));
+        if (eq <= 0) continue;
+        const QString band = entry.left(eq).trimmed().toLower();
+        const QString antenna = entry.mid(eq + 1).trimmed();
+        if (!band.isEmpty() && !antenna.isEmpty()) textAntennaByBand.insert(band, antenna);
+    }
     textPower = settings.value("Text/power", textPower).toString();
     textMacroLabels = settings.value("Text/macroLabels", textMacroLabels).toStringList();
     textMacroTexts = settings.value("Text/macroTexts", textMacroTexts).toStringList();
@@ -811,6 +823,7 @@ bool AppSettings::save() const
     settings.setValue("Logbook/udpEnabled", logbookUdpEnabled);
     settings.setValue("Logbook/udpServer", logbookUdpServer.trimmed().isEmpty() ? QStringLiteral("127.0.0.1") : logbookUdpServer.trimmed());
     settings.setValue("Logbook/udpPort", qBound(1, logbookUdpPort, 65535));
+    settings.setValue("PskReporter/enabled", pskReporterEnabled);
     settings.setValue("Logbook/visibleFieldsConfigured", logbookVisibleFieldsConfigured);
     settings.setValue("Logbook/visibleFields", logbookVisibleFields);
     settings.setValue("Display/waterfallColorScalePercent", waterfallColorScalePercent);
@@ -1010,6 +1023,9 @@ bool AppSettings::save() const
     settings.setValue("FT8/decodeFilterCqEnd", ftDecodeFilterCqEnd);
     settings.setValue("FT8/decodeFilterWorked", ftDecodeFilterWorked);
     settings.setValue("FT8/decodeFilterWorkedDays", ftDecodeFilterWorkedDays);
+    settings.setValue("FT8/decodeFilterCountries", ftDecodeFilterCountries);
+    settings.setValue("FT8/decodeFilterCountryList", ftDecodeFilterCountryList);
+    settings.setValue("FT8/decodeFilterContinentList", ftDecodeFilterContinentList);
     settings.setValue("FT8/highlightNewCountryEnabled", ftHighlightNewCountryEnabled);
     settings.setValue("FT8/watchListIconEnabled", ftWatchListIconEnabled);
     settings.setValue("FT8/blacklistCalls", ftBlacklistCalls);
@@ -1091,6 +1107,13 @@ bool AppSettings::save() const
     settings.remove("Text/report");
     settings.setValue("Text/rig", textRig);
     settings.setValue("Text/antenna", textAntenna);
+    {
+        QStringList byBand;
+        for (auto it = textAntennaByBand.cbegin(); it != textAntennaByBand.cend(); ++it) {
+            if (!it.value().trimmed().isEmpty()) byBand << it.key() + QLatin1Char('=') + it.value().trimmed();
+        }
+        settings.setValue("Text/antennaByBand", byBand);
+    }
     settings.setValue("Text/power", textPower);
     settings.setValue("Text/macroLabels", textMacroLabels);
     settings.setValue("Text/macroTexts", textMacroTexts);

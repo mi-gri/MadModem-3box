@@ -11,7 +11,7 @@
 #include <stdexcept>
 static void require(bool value,const char*message){if(!value)throw std::runtime_error(message);}
 int main(int argc,char**argv){
- QApplication app(argc,argv);app.setApplicationName("MadModem");QSettings settings(AppSettings::settingsFilePath(),QSettings::IniFormat);settings.setValue("Updates/checkAtStartup",false);settings.sync();MainWindow w;
+ QApplication app(argc,argv);app.setApplicationName("MultiModeModem");QSettings settings(AppSettings::settingsFilePath(),QSettings::IniFormat);settings.setValue("Updates/checkAtStartup",false);settings.sync();MainWindow w;
  for(QString mode:{QString("FT8"),QString("FT4")}){
   w.ui->cmbMode->setCurrentText(mode);w.m_settings.textMyCallsign="IZ6NNH";w.m_settings.textMyLocator="JN63";w.stopFt8Sequencer("probe reset");w.m_ft8OperatorStopLatched=false;
   const int period=mode=="FT8"?15000:7500;const qint64 slot=QDateTime::currentDateTimeUtc().toMSecsSinceEpoch()/period*period;
